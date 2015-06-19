@@ -1,0 +1,68 @@
+# [PackageDev] target_format: plist, ext: tmLanguage
+---
+name: Links
+scopeName: source.links
+fileTypes: [links]
+uuid: 8f604b2a-6eae-462c-94b1-bd725f391351
+
+patterns:
+
+- name: string.quoted.links
+  begin: \"
+  end: \"
+  patterns:
+  - name: string.unquoted.links
+    match: (^\")*
+
+# - name: keyword.control.links
+#   begin: typename\s+
+#   end: \s+=
+#   patterns:
+#   - name: storage.type.links
+#     match: ([A-Z][A-Za-z0-9_\(\):,]+)
+
+- name: storage.type.links
+
+  match: ((\s+|[\(\|\.\?!~:,]))([A-Z][A-Za-z0-9_]+)
+  captures:
+    '2': {name: keyword.control.links}
+
+- name: stuff.links
+  beginCaptures:
+    '0': {name: keyword.control.links}
+  begin: (sig|fun)\s+
+  end: :|\(|\s+
+  patterns:
+  - name: entity.name.function.links
+    match: ([a-z][A-Za-z0-9_]+)
+
+- name: comment.line.number-sign.links
+  match: \#.*$
+  comment: need to deal with cases where # is part of string
+
+- name: keyword.control.links
+  match: typename|var|(lin)?fun|sig|case|switch
+
+- name: keyword.control.sessions.links
+  match: spawn|spawnAngel|spawnDemon|offer|receive|send|select|(lin)?(fork|knife)|ignore
+
+- name: constant.numeric.links
+  match: (\-?[0-9]+(\.[0-9]+)?)
+
+- name: keyword.operator.types.links
+  match: \->|~>?|:|\?|!|\[&|&\]
+
+- name: keyword.operator.other.links
+  match: ::|=|\|
+
+- name: keyword.operator.arithmetic.links
+  match: (\+|\-|\*|/|\^)\.?|mod
+
+- name: constant.language.links
+  match: _|true|false
+
+
+# - name: variable.parameter.links  #orange
+# - name: storage.modifier.links    #pink
+- name: constant.language.links
+  match: testcolor

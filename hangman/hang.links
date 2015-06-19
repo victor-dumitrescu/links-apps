@@ -1,0 +1,161 @@
+typename Hangman = [&| Guess:?Char.Hangman,
+                       Win:!Bool.End |&];
+typename Word = [&| NewWord:!String.EndBang |&];
+
+#### helper functions ###
+fun elemAt(l, pos) {
+    if (l == [])
+        error("End of list reached")
+    else
+        switch(pos) {
+            case 0 -> hd(l)
+            case n -> elemAt(tl(l), pos-1)
+        }
+}
+
+sig bool_to_string: (Bool) -> String
+fun bool_to_string(x) {
+    switch(x) {
+        case true -> "True"
+        case false -> "False"
+    }
+}
+
+sig string_to_char: (String) ~> Maybe(Char)
+fun string_to_char(x) {
+    var letter = hd(explode(x));
+    if (tl(explode(x)) == [])
+        if (isAlpha(letter))
+            Just(letter)
+        else
+            Nothing
+    else
+        Nothing
+}
+#########################
+
+sig choose_word: (Word) ~> EndBang
+fun choose_word(s) {
+    var words = ["cat", "seal", "mouse", "horse", "tapir"];
+    var word = elemAt(words, floatToInt(ceiling(random() *. intToFloat(length(words))))-1);
+
+    <| offer s {
+        case NewWord -> s[word].s[] } |>
+}
+
+sig new_word: (~Word) ~> String
+fun new_word(s) {
+    var s = select NewWord s;
+    var (word, s) = receive(s);
+    wait(s);
+    word
+}
+
+
+fun check_guess(letter, word) {
+    if (elem(letter, explode(word))) {
+        var word_list = explode(word);
+        var node_id = lookup(letter, zip(word_list, intRange(0, length(word_list)-1)));
+        if (isJust(node_id)) { 
+            var letter = implode([letter]);
+            replaceNode(<span>{stringToXml(letter)}</span>,
+                        getNodeById("char" ^^ intToString(fromJust(node_id))));
+            format_output("Guess is correct.")
+        }
+        else
+            error("Something went wrong")
+    }
+    else
+        format_output("Guess is not correct.")
+
+}
+
+sig format_output: (String) ~> ()
+fun format_output(text) {
+    replaceNode(<span id="outcome">{stringToXml(text)}</span>, 
+                getNodeById("outcome"))
+}
+
+sig setup_word_slots: (String) ~> [Xml]
+fun setup_word_slots(word) {
+
+    # create a number of spans equal to the length of the selected word
+    # as placeholders for each letter
+    map(fun(x) {
+            <span id="{"char" ^^ intToString(x)}"> _ </span>
+        },
+        intRange(0, length(explode(word))-1))
+}
+
+fun guessing(word, s) client {
+    offer(s) {
+        case Guess(s) -> {
+            var (letter, s) = receive(s);
+            check_guess(letter, word);
+            guessing(word, s)
+        }
+    }
+}
+
+fun setup_game() {
+
+    # request a new word to start game
+    var word = new_word(fork(choose_word));
+
+    var ap = new();
+    var _  = spawn {
+        fun guess(c) {
+            var s = accept(ap);
+            <| offer s {
+                case Guess -> s(letter).{
+                    <| Guess c.c[letter].{(guess(c))} |>
+                }
+            } |>
+        }
+
+        guess(knife(fun (s) {guessing(word, s)}))
+    };
+
+    fun make_guess(letter) {
+
+        var chr = string_to_char(letter);  # check user input for validity
+        if (isJust(chr)) {
+            # check_guess(fromJust(chr), word)
+            var c = request(ap);
+            <| Guess c.c[fromJust(chr)].{()} |>
+        }
+        else
+            format_output("Invalid input.")
+    }
+
+    fun make_form() {
+    <form l:onsubmit="{make_guess(letter)}">
+        <input type="text" l:name="letter"/>
+    </form>
+    }
+
+    <body>
+        <span id="word_slots">
+            {concat(setup_word_slots(word))}
+        </span>
+        <br/><br/>
+        {make_form()}
+        <br/>
+        <span id="outcome"/>
+    </body>
+}
+
+fun main() {
+
+    page
+        <html>
+        <head>
+            <title>Hangman</title>
+            <link rel="stylesheet" href="/css/reset.css"/>
+        </head>
+        {setup_game()}
+        </html>
+
+}
+
+main()
