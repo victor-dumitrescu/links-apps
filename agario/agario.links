@@ -1,0 +1,211 @@
+typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
+typename PointState = (x: Float, y: Float);
+
+fun getWidth() {
+    <div> {stringToXml(domGetAttributeFromRef(getNodeById("canvas"), "height"))} </div>
+}
+
+fun print_input(in_events: [Input]) {
+    if (in_events == [])
+        ()
+    else
+        switch (hd(in_events)) {
+            case KeyUp(x) -> print("KeyUp " ^^ intToString(x))
+            case KeyDown(x) -> print("KeyDown " ^^ intToString(x))
+            case Cursor(x,y) -> print("Cursor " ^^ intToString(x) ^^ " " ^^ intToString(y))
+        }
+}
+
+fun clear(ctx) {
+    jsClearRect(ctx, 0.0, 0.0, jsCanvasWidth(ctx), jsCanvasHeight(ctx))
+}
+
+fun keyDown(code, inEvents) {
+    fun step(old, inp) {
+        if (inp == KeyUp(code)) false
+        else if (inp == KeyDown(code)) true
+        else old
+    }
+    
+    fold_left(step, false, inEvents)
+}
+
+fun cursor(in_events, no_events) {
+
+    fun is_mouse_event(event) {
+        switch (event) {
+            case Cursor(x,y) -> true
+            case _ -> false
+        }
+    }
+
+    if (in_events == [])
+        (-1,1)
+    else {
+
+        # print(intToString(length(filter(is_mouse_event, in_events))));
+        var last = hd(in_events);
+        switch (last) {
+            case Cursor(x,y) -> (x,y)
+            case _ -> (-1,-1)
+        }
+    }
+}
+
+fun draw(state: PointState) {
+    var canvas_node = getNodeById("canvas");
+    var ctx = jsGetContext2D(canvas_node);
+    clear(ctx);
+    jsSetFillColor(ctx, "#a44");
+    jsFillCircle(ctx, state.x, state.y, 15.0);
+    ()
+}
+
+fun main() client {
+
+    var left_key_code = 37;
+    var up_key_code = 38;
+    var right_key_code = 39;
+    var down_key_code = 40;
+
+    var state = (x=100.0, y=100.0);
+    var step = 10.0;
+
+    fun master_proc() {
+        fun master_loop(proc_id) {
+            proc_id ! (recv().2: Input);  # .2 is the input
+            master_loop(proc_id)
+        }
+        master_loop(recv().1)             # .1 is the process
+    }
+
+    var master_proc_id = spawn { master_proc() };
+
+    fun dummy_proc(i) {
+        ignore(recv());
+        ()
+    }
+
+    var dummy_proc_id = spawn { dummy_proc([]: [Input]) };
+
+    fun update_logic(state, in_events: [Input]) {
+        # print_input(in_events);
+        var left_down = keyDown(left_key_code, in_events);
+        var right_down = keyDown(right_key_code, in_events);
+        var up_down = keyDown(up_key_code, in_events);
+        var down_down = keyDown(down_key_code, in_events);
+        var cursor_xy = cursor(in_events, 0);
+
+        master_proc_id ! (dummy_proc_id, KeyDown(-1): Input);   # clear the event list
+        
+        if (left_down)
+            (x=state.x -. step, y=state.y): PointState
+        else if (right_down)
+            (x=state.x +. step, y=state.y): PointState
+        else if (up_down)
+            (x=state.x, y=state.y -. step): PointState
+        else if (down_down)
+            (x=state.x, y=state.y +. step): PointState
+        
+        else if (not(cursor_xy == (-1,1))) {
+            # print(intToString(cursor_xy.1) ^^ " " ^^ intToString(cursor_xy.2));
+            replaceNode(<span id="mouse_x">{intToXml(cursor_xy.1)}</span>,
+                        getNodeById("mouse_x"));
+            replaceNode(<span id="mouse_y">{intToXml(cursor_xy.2)}</span>,
+                        getNodeById("mouse_y"));
+
+            (x=intToFloat(cursor_xy.1), y=intToFloat(cursor_xy.2)): PointState }
+
+        else
+            (x=state.x, y=state.y): PointState
+    }
+
+    fun update_state() {
+        fun main_loop(state: PointState) {
+
+            # var i = if (haveMail())
+            #             recv()
+            #         else {
+            #             master_proc_id ! (dummy_proc_id, KeyDown(-2): Input);
+            #             recv()
+            #         };
+            var i = recv();
+
+            var state_p = update_logic(state, i);
+            draw(state_p);
+
+            replaceNode(<span id="player_x">{floatToXml(state_p.x)}</span>,
+                        getNodeById("player_x"));
+            replaceNode(<span id="player_y">{floatToXml(state_p.y)}</span>,
+                        getNodeById("player_y"));
+
+            main_loop(state_p)
+        }
+
+        # ignore(recv());
+        main_loop(state);
+        if (not(haveMail())) self() ! ([]: [Input]) else ();
+        update_state()
+    }
+
+    var update_proc_id = spawn { update_state() };
+
+    fun input_state_loop(i) {
+        var r = recv();
+        var i = if (not(r == KeyDown(-1))) i ++ [r] else ([]: [Input]);  # reset input when KeyDown(-1)
+
+        if (not(r == KeyDown(-1)))
+            update_proc_id ! i
+        else ();
+        input_state_loop(i)
+    }
+
+    var input_proc_id = spawn{ input_state_loop([]: [Input]) };
+
+    fun on_key_down(e) {
+        # print(intToString(getCharCode(e)));
+        input_proc_id ! (KeyDown(getCharCode(e)): Input);
+    }
+
+    fun on_key_up(e) {
+        input_proc_id ! (KeyUp(getCharCode(e)): Input);
+    }
+
+    fun on_mousemove(e) {
+        input_proc_id ! (Cursor((getPageX(e), getPageY(e))): Input);
+    }
+
+    master_proc_id ! (input_proc_id, KeyDown(-2): Input);
+    
+    fun initialize() {
+        ignore(recv());
+
+        jsSetOnKeyDown(getNodeById("container"), on_key_down);
+        jsSetOnEvent(getNodeById("container"), "keyup", on_key_up, true);
+        jsSetOnEvent(getNodeById("container"), "mousemove", on_mousemove, true);
+
+        update_proc_id ! ([]: [Input])
+    }
+
+    var initialize_proc_id = spawn{ initialize() };
+                #<link rel="stylesheet" href="css/main.css"/>
+    page
+
+        <html>
+            <head>
+                <title>Agar.io</title>
+                
+            </head>
+            <body>
+                <div id="container" tabindex="1"
+                    l:onfocus="{initialize_proc_id ! 0}">
+                    <canvas id="canvas" height="700" width="700"/>
+                </div>
+                Cursor position: <span id="mouse_x"> 0 </span> <span id="mouse_y"> 0 </span>
+                <br/>
+                Player position: <span id="player_x"> 0 </span> <span id="player_y"> 0 </span>
+            </body>
+        </html>
+}
+
+main()
