@@ -1,9 +1,48 @@
-typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
-typename PointState = (x: Float, y: Float);
+#
+# LISTS
+#
 
-fun getWidth() {
-    <div> {stringToXml(domGetAttributeFromRef(getNodeById("canvas"), "height"))} </div>
+fun lsMap(f, l) {
+    if (lsEmpty(l)) lsNilF()
+    else lsCons(f(lsHead(l)), lsMap(f, lsTail(l)))
 }
+
+fun lsFilter(p, l) {
+    if (lsEmpty(l)) lsNilF()
+    else if (p(lsHead(l))) lsCons(lsHead(l), lsFilter(p, lsTail(l)))
+    else lsFilter(p, lsTail(l))
+}
+
+fun lsMapIgnore(f, l) {
+    if (lsEmpty(l)) ()
+    else { var _ = f(lsHead(l)); lsMapIgnore(f, lsTail(l)) }
+}
+
+fun lsCatMaybes(l) {
+    if (lsEmpty(l)) lsNilF()
+    else switch (lsHead(l)) {
+        case Just(x) -> lsCons(x, lsCatMaybes(lsTail(l)))
+        case Nothing -> lsCatMaybes(lsTail(l))
+    }
+}
+
+fun lsFoldLeft(f, i, l) {
+    if (lsEmpty(l)) i
+    else lsFoldLeft(f, f(i, lsHead(l)), lsTail(l))
+}
+
+########
+
+fun floatAbs(a: Float) {
+    if (a >= 0.0) a else -.a
+}
+
+########################################################################
+
+typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
+typename PlayerState = (x: Float, y: Float, mass: Int);
+typename ScreenState = (x: Float, y: Float, scale: Float);
+typename GameState = (screen: ScreenState, player: PlayerState);
 
 fun print_input(in_events: [Input]) {
     if (in_events == [])
@@ -40,7 +79,7 @@ fun cursor(in_events, no_events) {
     }
 
     if (in_events == [])
-        (-1,1)
+        (-1,-1)
     else {
 
         # print(intToString(length(filter(is_mouse_event, in_events))));
@@ -52,24 +91,111 @@ fun cursor(in_events, no_events) {
     }
 }
 
-fun draw(state: PointState) {
-    var canvas_node = getNodeById("canvas");
-    var ctx = jsGetContext2D(canvas_node);
-    clear(ctx);
-    jsSetFillColor(ctx, "#a44");
-    jsFillCircle(ctx, state.x, state.y, 15.0);
-    ()
-}
-
 fun main() client {
+
+    var pi = 3.141593;
+
+    var logging = true;
 
     var left_key_code = 37;
     var up_key_code = 38;
     var right_key_code = 39;
     var down_key_code = 40;
+    var m_key_code = 77;
 
-    var state = (x=100.0, y=100.0);
-    var step = 10.0;
+    var canvas1 = "canvas1";
+    var canvas2 = "canvas2";
+
+    var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
+    var player_state = (x=500.0, y=500.0, mass=20): PlayerState;
+    var state = (screen=screen_state, player=player_state): GameState;
+    var step = 5.0;
+    var cached_cursor = (-1,-1);
+
+    var gameWidth = 2000;
+    var gameHeight = 2000;
+    var screenWidth = 700;
+    var screenHeight = 500;
+    var screenWidthFloat = intToFloat(screenWidth);
+    var screenHeightFloat = intToFloat(screenHeight);
+    var grid_lines_distance = 30;
+
+    fun swap_buffers(main_canvas_node, disp_canvas_node) {
+        var ctx = jsGetContext2D(disp_canvas_node);
+        jsDrawImage(ctx, main_canvas_node, 0.0, 0.0);
+
+        ignore(domSetStyleAttrFromRef(main_canvas_node, "display", "block"));
+        ignore(domSetStyleAttrFromRef(disp_canvas_node, "display", "none"));
+        clear(ctx)
+    }
+
+
+    fun draw(state: GameState) {
+
+        var (main_canvas, disp_canvas) = 
+            if (domGetStyleAttrFromRef(getNodeById(canvas1), "display") == "none")
+                (canvas1, canvas2)
+            else
+                (canvas2, canvas1);
+
+        var canvas_node = getNodeById(main_canvas);
+        var ctx = jsGetContext2D(canvas_node);
+
+        fun draw_grid() {
+
+            jsLineWidth(ctx, 1.0);
+            jsStrokeStyle(ctx, "#ddd");
+
+            var x_offset = screenWidthFloat /. 2.0;
+            var y_offset = screenHeightFloat /. 2.0;
+
+            jsBeginPath(ctx);
+            var xs = lsFilter(fun(x) { x > state.player.x -. x_offset &&
+                                       x < state.player.x +. x_offset},
+                              lsMap(fun(x){ intToFloat(grid_lines_distance * x) },
+                                    lsRange(0, gameWidth/grid_lines_distance)));
+            lsMapIgnore(fun(x){ jsMoveTo(ctx, x -. state.player.x +. x_offset, 0.0);
+                                jsLineTo(ctx, x -. state.player.x +. x_offset, screenHeightFloat);
+                                jsStroke(ctx)},
+                                xs);
+
+            var ys = lsFilter(fun(y) { y > state.player.y -. y_offset &&
+                                       y < state.player.y +. y_offset},
+                              lsMap(fun(y){ intToFloat(grid_lines_distance * y) }, 
+                                    lsRange(0, gameHeight/grid_lines_distance)));
+            lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, y -. state.player.y +. y_offset);
+                                jsLineTo(ctx, screenWidthFloat, y -. state.player.y +. y_offset);
+                                jsStroke(ctx)},
+                                ys);
+
+            jsClosePath(ctx);
+            
+        }
+
+        fun draw_player(state: PlayerState) {
+            jsBeginPath(ctx);
+            jsArc(ctx, screenWidthFloat /. 2.0, screenHeightFloat /. 2.0, 
+                  10.0 *. sqrt(intToFloat(state.mass) /. pi),
+                  0.0, 2.0 *. pi, false);
+            jsSetFillColor(ctx, "green");
+            jsFill(ctx);
+            jsLineWidth(ctx, 3.0);
+            jsStrokeStyle(ctx, "#003300");
+            jsStroke(ctx);
+
+            # jsSetFillColor(ctx, "#a44");
+            # jsFillCircle(ctx, screenWidthFloat /. 2.0, 
+            #                   screenHeightFloat /. 2.0, 
+            #                   10.0 *. sqrt(intToFloat(state.mass) /. pi));
+        }
+
+        draw_grid();
+        draw_player(state.player);
+
+        swap_buffers(canvas_node, getNodeById(disp_canvas));
+
+        ()
+    }
 
     fun master_proc() {
         fun master_loop(proc_id) {
@@ -88,7 +214,38 @@ fun main() client {
 
     var dummy_proc_id = spawn { dummy_proc([]: [Input]) };
 
-    fun update_logic(state, in_events: [Input]) {
+    fun compute_player_position(player_state, cursor) {
+        var v = 100.0 /. intToFloat(player_state.mass);
+
+        # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
+        var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. intToFloat(cursor.1)) /. screenWidthFloat;
+        var delta_y_norm = 2.0 *. (screenHeightFloat /. 2.0 -. intToFloat(cursor.2)) /. screenHeightFloat;
+        var dir_x = if (delta_x_norm > 0.0) -.1.0 else 1.0;
+        var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
+
+        if (delta_x_norm == 0.0 && delta_y_norm == 0.0)
+            (x=player_state.x, y=player_state.y, mass=player_state.mass): PlayerState            
+        else {
+            # compute velocity components depending on ratio of deltas so that total velocity remains constant
+            var delta_ratio = if (delta_y_norm == 0.0) 
+                                1.0 
+                              else 
+                                floatAbs(delta_x_norm) /. floatAbs(delta_y_norm);
+            var delta_y_p = sqrt( (v ^. 2.0) /. (delta_ratio ^. 2.0 +. 1.0) );
+            var delta_x_p = delta_y_p *. delta_ratio;
+
+            var x_p = player_state.x +. dir_x *. delta_x_p;
+            var y_p = player_state.y +. dir_y *. delta_y_p;
+
+            # don't update if player is at borders
+            var x_new = if (x_p < 0.0) 0.0 else if (x_p > intToFloat(gameWidth)) intToFloat(gameWidth) else x_p;
+            var y_new = if (y_p < 0.0) 0.0 else if (y_p > intToFloat(gameHeight)) intToFloat(gameHeight) else y_p;
+
+            (x=x_new, y=y_new, mass=player_state.mass): PlayerState
+        }
+    }
+
+    fun update_logic(state: GameState, in_events: [Input], cached_cursor) {
         # print_input(in_events);
         var left_down = keyDown(left_key_code, in_events);
         var right_down = keyDown(right_key_code, in_events);
@@ -96,48 +253,61 @@ fun main() client {
         var down_down = keyDown(down_key_code, in_events);
         var cursor_xy = cursor(in_events, 0);
 
-        master_proc_id ! (dummy_proc_id, KeyDown(-1): Input);   # clear the event list
+        master_proc_id ! (dummy_proc_id, KeyDown(-1): Input);   # clear the event queue
         
-        if (left_down)
-            (x=state.x -. step, y=state.y): PointState
-        else if (right_down)
-            (x=state.x +. step, y=state.y): PointState
-        else if (up_down)
-            (x=state.x, y=state.y -. step): PointState
-        else if (down_down)
-            (x=state.x, y=state.y +. step): PointState
-        
-        else if (not(cursor_xy == (-1,1))) {
-            # print(intToString(cursor_xy.1) ^^ " " ^^ intToString(cursor_xy.2));
-            replaceNode(<span id="mouse_x">{intToXml(cursor_xy.1)}</span>,
-                        getNodeById("mouse_x"));
-            replaceNode(<span id="mouse_y">{intToXml(cursor_xy.2)}</span>,
-                        getNodeById("mouse_y"));
+        var player_state = state.player;
 
-            (x=intToFloat(cursor_xy.1), y=intToFloat(cursor_xy.2)): PointState }
+        var cached_cursor_p = if (cursor_xy == (-1,-1)) cached_cursor else cursor_xy;
+        var player_state_p = 
+            if (left_down)
+                (x=player_state.x -. step, y=player_state.y, mass=player_state.mass): PlayerState
+            else if (right_down)
+                (x=player_state.x +. step, y=player_state.y, mass=player_state.mass): PlayerState
+            else if (up_down)
+                (x=player_state.x, y=player_state.y -. step, mass=player_state.mass): PlayerState
+            else if (down_down)
+                (x=player_state.x, y=player_state.y +. step, mass=player_state.mass): PlayerState
+            else if (keyDown(m_key_code, in_events))
+                (x=player_state.x, y=player_state.y, mass=player_state.mass + 1): PlayerState
+            
+            else if (not(cursor_xy == (-1,-1))) {
+                
+                if (logging) {
+                    replaceNode(<span id="mouse_x">{intToXml(cached_cursor_p.1)}</span>,
+                                getNodeById("mouse_x"));
+                    replaceNode(<span id="mouse_y">{intToXml(cached_cursor_p.2)}</span>,
+                                getNodeById("mouse_y"));
+                } else ();
+            
+                # (x=intToFloat(cursor_xy.1), y=intToFloat(cursor_xy.2)): PlayerState }
+                compute_player_position(player_state: PlayerState, cursor_xy) }
+            else compute_player_position(player_state: PlayerState, cached_cursor_p);
+                # (x=player_state.x, y=player_state.y, mass=player_state.mass): PlayerState;
 
-        else
-            (x=state.x, y=state.y): PointState
+            ((screen=state.screen, player=player_state_p): GameState, cached_cursor_p)
     }
 
     fun update_state() {
-        fun main_loop(state: PointState) {
+        fun main_loop(state: GameState) {
 
             # var i = if (haveMail())
             #             recv()
             #         else {
-            #             master_proc_id ! (dummy_proc_id, KeyDown(-2): Input);
+            #             master_proc_id ! (dummy_proc_id, Cursor(cached_cursor): Input);
             #             recv()
             #         };
             var i = recv();
 
-            var state_p = update_logic(state, i);
+            var (state_p, cached_cursor_p) = update_logic(state, i, cached_cursor);
+            var cached_cursor = if (cached_cursor_p == (-1,-1)) cached_cursor else cached_cursor_p;
             draw(state_p);
 
-            replaceNode(<span id="player_x">{floatToXml(state_p.x)}</span>,
-                        getNodeById("player_x"));
-            replaceNode(<span id="player_y">{floatToXml(state_p.y)}</span>,
-                        getNodeById("player_y"));
+            if (logging) {
+                replaceNode(<span id="player_x">{floatToXml(state_p.player.x)}</span>,
+                            getNodeById("player_x"));
+                replaceNode(<span id="player_y">{floatToXml(state_p.player.y)}</span>,
+                            getNodeById("player_y"));
+            } else ();
 
             main_loop(state_p)
         }
@@ -194,16 +364,21 @@ fun main() client {
         <html>
             <head>
                 <title>Agar.io</title>
-                
+                <style>
+                    body {{
+                        margin: 0;
+                        }}
+                </style>
             </head>
             <body>
                 <div id="container" tabindex="1"
                     l:onfocus="{initialize_proc_id ! 0}">
-                    <canvas id="canvas" height="700" width="700"/>
+                    <canvas id="{canvas1}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
+                    <canvas id="{canvas2}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
                 </div>
-                Cursor position: <span id="mouse_x"> 0 </span> <span id="mouse_y"> 0 </span>
+                Cursor position: <span id="mouse_x"></span> <span id="mouse_y"></span>
                 <br/>
-                Player position: <span id="player_x"> 0 </span> <span id="player_y"> 0 </span>
+                Player position: <span id="player_x"></span> <span id="player_y"></span>
             </body>
         </html>
 }
