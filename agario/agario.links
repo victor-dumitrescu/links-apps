@@ -31,18 +31,33 @@ fun lsFoldLeft(f, i, l) {
     else lsFoldLeft(f, f(i, lsHead(l)), lsTail(l))
 }
 
+fun lsUnzip(l) {
+    switch (lsEmpty(l)) {
+        case false -> {var prev_l = lsUnzip(lsTail(l));
+                       (lsCons(lsHead(l).1, prev_l.1), lsCons(lsHead(l).2, prev_l.2)) }
+        case true -> (lsNilF(), lsNilF())
+    }
+    # switch (lsEmpty(l)) {
+    #     case true -> lsNilF()
+    #     case false -> lsCons(lsHead(l))
+    # }
+}
+
 ########
 
 fun floatAbs(a: Float) {
     if (a >= 0.0) a else -.a
 }
 
+var pi = 3.141593;
+
 ########################################################################
 
 typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
-typename PlayerState = (x: Float, y: Float, mass: Int);
+typename PlayerState = (x: Float, y: Float, mass: Int, colour: (String, String));
 typename ScreenState = (x: Float, y: Float, scale: Float);
-typename GameState = (screen: ScreenState, player: PlayerState);
+typename FoodState = (pos: [(Float, Float)], colour: [String]);
+typename GameState = (screen: ScreenState, player: PlayerState, food: FoodState);
 
 fun print_input(in_events: [Input]) {
     if (in_events == [])
@@ -53,6 +68,59 @@ fun print_input(in_events: [Input]) {
             case KeyDown(x) -> print("KeyDown " ^^ intToString(x))
             case Cursor(x,y) -> print("Cursor " ^^ intToString(x) ^^ " " ^^ intToString(y))
         }
+}
+
+fun dec_to_hex(d: Int) {
+    # only works for 2-digit hex numbers
+    var hex = ls([mod(d/16, 16), mod(d, 16)]);
+    var hex_str = lsMap(fun(x) {switch(x) {
+                                    case "10" -> "A"
+                                    case "11" -> "B"
+                                    case "12" -> "C"
+                                    case "13" -> "D"
+                                    case "14" -> "E"
+                                    case "15" -> "F"
+                                    case x -> x}}, 
+                         lsMap(intToString, hex));
+    lsHead(hex_str) ^^ lsHead(lsTail(hex_str))
+}
+
+fun hsv_to_rgb(h: Float, s: Float, v: Float) {
+    var h_i = floatToInt(6.0 *. h);
+    var f = (6.0 *. h) -. intToFloat(h_i);
+    var p = v *. (1.0 -. s);
+    var q = v *. (1.0 -. f *. s);
+    var t = v *. (1.0 -. (1.0 -. f) *. s);
+
+    var rgb = switch (h_i) {
+                case 0 -> ls([v, t, p])
+                case 1 -> ls([q, v, p])
+                case 2 -> ls([p, v, t])
+                case 3 -> ls([p, q, v])
+                case 4 -> ls([t, p, v])
+                case 5 -> ls([v, p ,q])
+            };
+    lsMap(fun(x) {dec_to_hex(floatToInt(256.0 *. x))}, rgb)
+}
+
+fun random_colour(h: Float, s:Float, v: Float) {
+    # www.martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically
+    var h =
+        if (h == -.1.0) {
+            var grc = 0.618033988749895;
+            var gr = (random() +. grc);
+            if (gr > 1.0) gr -. 1.0 else gr}
+        else
+            h;
+    var vals = hsv_to_rgb(h, s, v);
+    lsFoldLeft(fun(x,y){x^^y}, "#", vals)
+}
+
+fun random_colour_player(s: Float, v: Float) {
+    var grc = 0.618033988749895;
+    var gr = (random() +. grc);
+    var h = if (gr > 1.0) gr -. 1.0 else gr; 
+    (random_colour(h, s -. 0.2, v +. 0.2), random_colour(h, s, v))
 }
 
 fun clear(ctx) {
@@ -91,11 +159,26 @@ fun cursor(in_events, no_events) {
     }
 }
 
+fun initialize_food(gameWidth, gameHeight, food_count) {
+    var range = lsRange(0, food_count);
+    var positions = lsZip(lsMap(fun(x) {intToFloat(gameWidth) *. random()}, range),
+                          lsMap(fun(x) {intToFloat(gameHeight) *. random()}, range));
+    var colour = lsMap(fun(x) {random_colour(-.1.0, 0.8, 0.9)}, range);
+    (pos=positions, colour=colour): FoodState
+}
+
+fun player_radius(mass) {
+    10.0 *. sqrt(intToFloat(mass)) /. pi
+}
+
+fun euclidean_dist((x1, y1), (x2, y2)) {
+    sqrt( (x1 -. x2) ^. 2.0 +. (y1 -. y2) ^. 2.0 )
+}
+
+
 fun main() client {
 
-    var pi = 3.141593;
-
-    var logging = true;
+    var logging = false;
 
     var left_key_code = 37;
     var up_key_code = 38;
@@ -106,19 +189,27 @@ fun main() client {
     var canvas1 = "canvas1";
     var canvas2 = "canvas2";
 
-    var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
-    var player_state = (x=500.0, y=500.0, mass=20): PlayerState;
-    var state = (screen=screen_state, player=player_state): GameState;
-    var step = 5.0;
-    var cached_cursor = (-1,-1);
-
     var gameWidth = 2000;
     var gameHeight = 2000;
     var screenWidth = 700;
     var screenHeight = 500;
     var screenWidthFloat = intToFloat(screenWidth);
     var screenHeightFloat = intToFloat(screenHeight);
+    var x_offset = screenWidthFloat /. 2.0;
+    var y_offset = screenHeightFloat /. 2.0;
     var grid_lines_distance = 30;
+
+    var step = 5.0;
+    var base_velocity = 75.0;
+    var base_food_count = 450;
+    var food_radius = 10.0;
+    var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
+    var player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+    var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
+    var state = (screen=screen_state, player=player_state, food=food_state): GameState;
+
+    var cached_cursor = (-1,-1);
+
 
     fun swap_buffers(main_canvas_node, disp_canvas_node) {
         var ctx = jsGetContext2D(disp_canvas_node);
@@ -128,7 +219,6 @@ fun main() client {
         ignore(domSetStyleAttrFromRef(disp_canvas_node, "display", "none"));
         clear(ctx)
     }
-
 
     fun draw(state: GameState) {
 
@@ -146,14 +236,12 @@ fun main() client {
             jsLineWidth(ctx, 1.0);
             jsStrokeStyle(ctx, "#ddd");
 
-            var x_offset = screenWidthFloat /. 2.0;
-            var y_offset = screenHeightFloat /. 2.0;
-
             jsBeginPath(ctx);
             var xs = lsFilter(fun(x) { x > state.player.x -. x_offset &&
                                        x < state.player.x +. x_offset},
                               lsMap(fun(x){ intToFloat(grid_lines_distance * x) },
-                                    lsRange(0, gameWidth/grid_lines_distance)));
+                                    lsRange(-screenWidth/2/grid_lines_distance, 
+                                            (gameWidth+screenWidth/2)/grid_lines_distance)));
             lsMapIgnore(fun(x){ jsMoveTo(ctx, x -. state.player.x +. x_offset, 0.0);
                                 jsLineTo(ctx, x -. state.player.x +. x_offset, screenHeightFloat);
                                 jsStroke(ctx)},
@@ -162,7 +250,8 @@ fun main() client {
             var ys = lsFilter(fun(y) { y > state.player.y -. y_offset &&
                                        y < state.player.y +. y_offset},
                               lsMap(fun(y){ intToFloat(grid_lines_distance * y) }, 
-                                    lsRange(0, gameHeight/grid_lines_distance)));
+                                    lsRange(-screenHeight/2/grid_lines_distance, 
+                                            (gameHeight+screenHeight/2)/grid_lines_distance)));
             lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, y -. state.player.y +. y_offset);
                                 jsLineTo(ctx, screenWidthFloat, y -. state.player.y +. y_offset);
                                 jsStroke(ctx)},
@@ -172,24 +261,42 @@ fun main() client {
             
         }
 
+        fun draw_food(state: GameState) { #(food_state: FoodState, player_state: PlayerState) {
+            var food_state = state.food;
+            var player_state = state.player;
+            var props = lsZip(food_state.pos, food_state.colour);
+            lsMapIgnore(fun(prop){ 
+                            jsBeginPath(ctx);
+                            jsArc(ctx, (prop.1).1 -. player_state.x +. x_offset, 
+                                       (prop.1).2 -. player_state.y +. y_offset,  
+                                       food_radius, 0.0, 2.0 *. pi, false);
+                            jsSetFillColor(ctx, prop.2);
+                            jsFill(ctx);
+                            jsLineWidth(ctx, 1.0);
+                            jsStrokeStyle(ctx, "grey");
+                            jsStroke(ctx)
+                        }, lsFilter(fun(prop) { (prop.1).1 > player_state.x -. x_offset -. food_radius &&
+                                                (prop.1).1 < player_state.x +. x_offset +. food_radius &&
+                                                (prop.1).2 > player_state.y -. y_offset -. food_radius &&
+                                                (prop.1).2 < player_state.y +. y_offset +. food_radius
+                                              }, props))
+        }
+
         fun draw_player(state: PlayerState) {
             jsBeginPath(ctx);
             jsArc(ctx, screenWidthFloat /. 2.0, screenHeightFloat /. 2.0, 
-                  10.0 *. sqrt(intToFloat(state.mass) /. pi),
+                  player_radius(state.mass),
                   0.0, 2.0 *. pi, false);
-            jsSetFillColor(ctx, "green");
+            jsSetFillColor(ctx, state.colour.1);
             jsFill(ctx);
             jsLineWidth(ctx, 3.0);
-            jsStrokeStyle(ctx, "#003300");
+            jsStrokeStyle(ctx, state.colour.2);
             jsStroke(ctx);
 
-            # jsSetFillColor(ctx, "#a44");
-            # jsFillCircle(ctx, screenWidthFloat /. 2.0, 
-            #                   screenHeightFloat /. 2.0, 
-            #                   10.0 *. sqrt(intToFloat(state.mass) /. pi));
         }
 
         draw_grid();
+        draw_food(state);
         draw_player(state.player);
 
         swap_buffers(canvas_node, getNodeById(disp_canvas));
@@ -214,8 +321,12 @@ fun main() client {
 
     var dummy_proc_id = spawn { dummy_proc([]: [Input]) };
 
+    fun compute_player_mass(player_state) {
+        player_state.mass
+    }
+
     fun compute_player_position(player_state, cursor) {
-        var v = 100.0 /. intToFloat(player_state.mass);
+        var v = base_velocity /. intToFloat(player_state.mass);
 
         # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
         var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. intToFloat(cursor.1)) /. screenWidthFloat;
@@ -223,8 +334,8 @@ fun main() client {
         var dir_x = if (delta_x_norm > 0.0) -.1.0 else 1.0;
         var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
 
-        if (delta_x_norm == 0.0 && delta_y_norm == 0.0)
-            (x=player_state.x, y=player_state.y, mass=player_state.mass): PlayerState            
+        if (delta_x_norm == 0.0 && delta_y_norm == 0.0) 
+            (x=player_state.x, y=player_state.y, mass=compute_player_mass(player_state), colour=player_state.colour): PlayerState            
         else {
             # compute velocity components depending on ratio of deltas so that total velocity remains constant
             var delta_ratio = if (delta_y_norm == 0.0) 
@@ -241,12 +352,25 @@ fun main() client {
             var x_new = if (x_p < 0.0) 0.0 else if (x_p > intToFloat(gameWidth)) intToFloat(gameWidth) else x_p;
             var y_new = if (y_p < 0.0) 0.0 else if (y_p > intToFloat(gameHeight)) intToFloat(gameHeight) else y_p;
 
-            (x=x_new, y=y_new, mass=player_state.mass): PlayerState
+            (x=x_new, y=y_new, mass=player_state.mass, colour=player_state.colour): PlayerState
         }
     }
 
+    fun update_food(state: GameState) {
+        
+        # filter out food particles which are eaten by the player and update player mass accordingly
+        var player_pos = (state.player.x, state.player.y);
+        var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, player_pos) > player_radius(state.player.mass) },
+                                      lsZip(state.food.pos, state.food.colour));
+        var (food_pos_p, food_colour_p) = lsUnzip(zipped_food_p);
+
+        (player=(x=state.player.x, y=state.player.y, colour=state.player.colour,
+                 mass=state.player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p))), 
+         screen=state.screen, 
+         food=(pos=food_pos_p, colour=food_colour_p)): GameState
+    }
+
     fun update_logic(state: GameState, in_events: [Input], cached_cursor) {
-        # print_input(in_events);
         var left_down = keyDown(left_key_code, in_events);
         var right_down = keyDown(right_key_code, in_events);
         var up_down = keyDown(up_key_code, in_events);
@@ -255,22 +379,24 @@ fun main() client {
 
         master_proc_id ! (dummy_proc_id, KeyDown(-1): Input);   # clear the event queue
         
-        var player_state = state.player;
+        var state_new = update_food(state);
+        var player_state = state_new.player;
 
         var cached_cursor_p = if (cursor_xy == (-1,-1)) cached_cursor else cursor_xy;
         var player_state_p = 
-            if (left_down)
-                (x=player_state.x -. step, y=player_state.y, mass=player_state.mass): PlayerState
-            else if (right_down)
-                (x=player_state.x +. step, y=player_state.y, mass=player_state.mass): PlayerState
-            else if (up_down)
-                (x=player_state.x, y=player_state.y -. step, mass=player_state.mass): PlayerState
-            else if (down_down)
-                (x=player_state.x, y=player_state.y +. step, mass=player_state.mass): PlayerState
-            else if (keyDown(m_key_code, in_events))
-                (x=player_state.x, y=player_state.y, mass=player_state.mass + 1): PlayerState
-            
-            else if (not(cursor_xy == (-1,-1))) {
+            # if (left_down)
+            #     (x=player_state.x -. step, y=player_state.y, mass=player_state.mass): PlayerState
+            # else if (right_down)
+            #     (x=player_state.x +. step, y=player_state.y, mass=player_state.mass): PlayerState
+            # else if (up_down)
+            #     (x=player_state.x, y=player_state.y -. step, mass=player_state.mass): PlayerState
+            # else if (down_down)
+            #     (x=player_state.x, y=player_state.y +. step, mass=player_state.mass): PlayerState
+            # else if (keyDown(m_key_code, in_events))
+            #     (x=player_state.x, y=player_state.y, mass=player_state.mass + 1): PlayerState
+            # 
+            # else if (not(cursor_xy == (-1,-1))) {
+            if (not(cursor_xy == (-1,-1))) {
                 
                 if (logging) {
                     replaceNode(<span id="mouse_x">{intToXml(cached_cursor_p.1)}</span>,
@@ -284,7 +410,7 @@ fun main() client {
             else compute_player_position(player_state: PlayerState, cached_cursor_p);
                 # (x=player_state.x, y=player_state.y, mass=player_state.mass): PlayerState;
 
-            ((screen=state.screen, player=player_state_p): GameState, cached_cursor_p)
+        ((screen=state_new.screen, player=player_state_p, food=state_new.food): GameState, cached_cursor_p)
     }
 
     fun update_state() {
