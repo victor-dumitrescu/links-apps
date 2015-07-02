@@ -292,7 +292,6 @@ fun main() client {
             jsLineWidth(ctx, 3.0);
             jsStrokeStyle(ctx, state.colour.2);
             jsStroke(ctx);
-
         }
 
         draw_grid();
