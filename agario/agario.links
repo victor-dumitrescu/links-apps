@@ -37,19 +37,31 @@ fun lsUnzip(l) {
                        (lsCons(lsHead(l).1, prev_l.1), lsCons(lsHead(l).2, prev_l.2)) }
         case true -> (lsNilF(), lsNilF())
     }
-    # switch (lsEmpty(l)) {
-    #     case true -> lsNilF()
-    #     case false -> lsCons(lsHead(l))
-    # }
 }
 
 ########
+
+var pi = 3.141593;
+var state_node_id = "state_node";
 
 fun floatAbs(a: Float) {
     if (a >= 0.0) a else -.a
 }
 
-var pi = 3.141593;
+fun dom_store_int(name: String, value: Int) {
+    var state_node = getNodeById(state_node_id);
+    ignore(domSetAttributeFromRef(state_node, name, intToString(value)))
+}
+
+fun dom_get_int(name: String) {
+    var state_node = getNodeById(state_node_id);
+    if (domHasAttribute(state_node, name))
+        Just(stringToInt(domGetAttributeFromRef(state_node, name)))
+    else
+        Nothing
+    
+}
+
 
 ########################################################################
 
@@ -58,6 +70,12 @@ typename PlayerState = (x: Float, y: Float, mass: Int, colour: (String, String))
 typename ScreenState = (x: Float, y: Float, scale: Float);
 typename FoodState = (pos: [(Float, Float)], colour: [String]);
 typename GameState = (screen: ScreenState, player: PlayerState, food: FoodState);
+
+typename StartGame = !String.?GameState.End;
+typename Game = [&| #StartGame: !String.?GameState.End,
+                    Move: !Input.?GameState.Game,
+                    GameOver: !Input.?GameState.End |&];
+
 
 fun print_input(in_events: [Input]) {
     if (in_events == [])
@@ -137,36 +155,6 @@ fun keyDown(code, inEvents) {
     fold_left(step, false, inEvents)
 }
 
-fun cursor(in_events, no_events) {
-
-    fun is_mouse_event(event) {
-        switch (event) {
-            case Cursor(x,y) -> true
-            case _ -> false
-        }
-    }
-
-    if (in_events == [])
-        (-1,-1)
-    else {
-
-        # print(intToString(length(filter(is_mouse_event, in_events))));
-        var last = hd(in_events);
-        switch (last) {
-            case Cursor(x,y) -> (x,y)
-            case _ -> (-1,-1)
-        }
-    }
-}
-
-fun initialize_food(gameWidth, gameHeight, food_count) {
-    var range = lsRange(0, food_count);
-    var positions = lsZip(lsMap(fun(x) {intToFloat(gameWidth) *. random()}, range),
-                          lsMap(fun(x) {intToFloat(gameHeight) *. random()}, range));
-    var colour = lsMap(fun(x) {random_colour(-.1.0, 0.8, 0.9)}, range);
-    (pos=positions, colour=colour): FoodState
-}
-
 fun player_radius(mass) {
     10.0 *. sqrt(intToFloat(mass)) /. pi
 }
@@ -175,41 +163,53 @@ fun euclidean_dist((x1, y1), (x2, y2)) {
     sqrt( (x1 -. x2) ^. 2.0 +. (y1 -. y2) ^. 2.0 )
 }
 
+### GAME CONSTANTS
+var logging = false;
 
-fun main() client {
+var left_key_code = 37;
+var up_key_code = 38;
+var right_key_code = 39;
+var down_key_code = 40;
+var m_key_code = 77;
 
-    var logging = false;
+var canvas1 = "canvas1";
+var canvas2 = "canvas2";
 
-    var left_key_code = 37;
-    var up_key_code = 38;
-    var right_key_code = 39;
-    var down_key_code = 40;
-    var m_key_code = 77;
+var gameWidth = 2000;
+var gameHeight = 2000;
+var screenWidth = 700;
+var screenHeight = 500;
+var screenWidthFloat = intToFloat(screenWidth);
+var screenHeightFloat = intToFloat(screenHeight);
+var x_offset = screenWidthFloat /. 2.0;
+var y_offset = screenHeightFloat /. 2.0;
+var grid_lines_distance = 30;
 
-    var canvas1 = "canvas1";
-    var canvas2 = "canvas2";
+var step = 5.0;
+var base_velocity = 150.0;
+var base_food_count = 450;
+var food_radius = 10.0;
 
-    var gameWidth = 2000;
-    var gameHeight = 2000;
-    var screenWidth = 700;
-    var screenHeight = 500;
-    var screenWidthFloat = intToFloat(screenWidth);
-    var screenHeightFloat = intToFloat(screenHeight);
-    var x_offset = screenWidthFloat /. 2.0;
-    var y_offset = screenHeightFloat /. 2.0;
-    var grid_lines_distance = 30;
+fun initial_game_state() client {
 
-    var step = 5.0;
-    var base_velocity = 75.0;
-    var base_food_count = 450;
-    var food_radius = 10.0;
+    fun initialize_food(gameWidth, gameHeight, food_count) {
+        var range = lsRange(0, food_count);
+        var positions = lsZip(lsMap(fun(x) {intToFloat(gameWidth) *. random()}, range),
+                              lsMap(fun(x) {intToFloat(gameHeight) *. random()}, range));
+        var colour = lsMap(fun(x) {random_colour(-.1.0, 0.8, 0.9)}, range);
+        (pos=positions, colour=colour): FoodState
+    }
+
     var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
     var player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
     var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
-    var state = (screen=screen_state, player=player_state, food=food_state): GameState;
+    (screen=screen_state, player=player_state, food=food_state): GameState    
+}
 
-    var cached_cursor = (-1,-1);
 
+fun main() {
+
+    var state = initial_game_state();
 
     fun swap_buffers(main_canvas_node, disp_canvas_node) {
         var ctx = jsGetContext2D(disp_canvas_node);
@@ -303,23 +303,6 @@ fun main() client {
         ()
     }
 
-    fun master_proc() {
-        fun master_loop(proc_id) {
-            proc_id ! (recv().2: Input);  # .2 is the input
-            master_loop(proc_id)
-        }
-        master_loop(recv().1)             # .1 is the process
-    }
-
-    var master_proc_id = spawn { master_proc() };
-
-    fun dummy_proc(i) {
-        ignore(recv());
-        ()
-    }
-
-    var dummy_proc_id = spawn { dummy_proc([]: [Input]) };
-
     fun compute_player_mass(player_state) {
         player_state.mass
     }
@@ -369,121 +352,99 @@ fun main() client {
          food=(pos=food_pos_p, colour=food_colour_p)): GameState
     }
 
-    fun update_logic(state: GameState, in_events: [Input], cached_cursor) {
-        var left_down = keyDown(left_key_code, in_events);
-        var right_down = keyDown(right_key_code, in_events);
-        var up_down = keyDown(up_key_code, in_events);
-        var down_down = keyDown(down_key_code, in_events);
-        var cursor_xy = cursor(in_events, 0);
+    fun update_logic(state: GameState, in_event: Input) {
+        var cursor_xy = switch(in_event) {
+            case Cursor(x,y) -> (x,y)
+            case _ -> (0,0)
+        };
 
-        master_proc_id ! (dummy_proc_id, KeyDown(-1): Input);   # clear the event queue
-        
         var state_new = update_food(state);
         var player_state = state_new.player;
 
-        var cached_cursor_p = if (cursor_xy == (-1,-1)) cached_cursor else cursor_xy;
-        var player_state_p = 
-            # if (left_down)
-            #     (x=player_state.x -. step, y=player_state.y, mass=player_state.mass): PlayerState
-            # else if (right_down)
-            #     (x=player_state.x +. step, y=player_state.y, mass=player_state.mass): PlayerState
-            # else if (up_down)
-            #     (x=player_state.x, y=player_state.y -. step, mass=player_state.mass): PlayerState
-            # else if (down_down)
-            #     (x=player_state.x, y=player_state.y +. step, mass=player_state.mass): PlayerState
-            # else if (keyDown(m_key_code, in_events))
-            #     (x=player_state.x, y=player_state.y, mass=player_state.mass + 1): PlayerState
-            # 
-            # else if (not(cursor_xy == (-1,-1))) {
-            if (not(cursor_xy == (-1,-1))) {
-                
-                if (logging) {
-                    replaceNode(<span id="mouse_x">{intToXml(cached_cursor_p.1)}</span>,
-                                getNodeById("mouse_x"));
-                    replaceNode(<span id="mouse_y">{intToXml(cached_cursor_p.2)}</span>,
-                                getNodeById("mouse_y"));
-                } else ();
-            
-                # (x=intToFloat(cursor_xy.1), y=intToFloat(cursor_xy.2)): PlayerState }
-                compute_player_position(player_state: PlayerState, cursor_xy) }
-            else compute_player_position(player_state: PlayerState, cached_cursor_p);
-                # (x=player_state.x, y=player_state.y, mass=player_state.mass): PlayerState;
+        var player_state_p = compute_player_position(player_state: PlayerState, cursor_xy);
 
-        ((screen=state_new.screen, player=player_state_p, food=state_new.food): GameState, cached_cursor_p)
+        (screen=state_new.screen, player=player_state_p, food=state_new.food): GameState
     }
 
     fun update_state() {
         fun main_loop(state: GameState) {
 
-            # var i = if (haveMail())
-            #             recv()
-            #         else {
-            #             master_proc_id ! (dummy_proc_id, Cursor(cached_cursor): Input);
-            #             recv()
-            #         };
-            var i = recv();
+            var (i: Input) = recv();
 
-            var (state_p, cached_cursor_p) = update_logic(state, i, cached_cursor);
-            var cached_cursor = if (cached_cursor_p == (-1,-1)) cached_cursor else cached_cursor_p;
+            var state_p = update_logic(state, i);
             draw(state_p);
-
-            if (logging) {
-                replaceNode(<span id="player_x">{floatToXml(state_p.player.x)}</span>,
-                            getNodeById("player_x"));
-                replaceNode(<span id="player_y">{floatToXml(state_p.player.y)}</span>,
-                            getNodeById("player_y"));
-            } else ();
 
             main_loop(state_p)
         }
-
-        # ignore(recv());
         main_loop(state);
-        if (not(haveMail())) self() ! ([]: [Input]) else ();
-        update_state()
     }
 
     var update_proc_id = spawn { update_state() };
 
-    fun input_state_loop(i) {
-        var r = recv();
-        var i = if (not(r == KeyDown(-1))) i ++ [r] else ([]: [Input]);  # reset input when KeyDown(-1)
+    # fun message_proc(s) {
+    #     receive {
+    #         case Get(p) -> {p ! s; message_proc(s)}
+    #         case Put(s) -> message_proc(s)
+    #     }
+    # }
+    # 
+    #  var message_proc_id = spawn{ message_proc(Cursor(0,0)) };
 
-        if (not(r == KeyDown(-1)))
-            update_proc_id ! i
-        else ();
-        input_state_loop(i)
+    fun game_proc() {
+        # var r = recv();
+        var start_time = getTime(event);
+        fun game_loop(prev_time: Int) {
+            var curr_time = getTime(event);
+            if (curr_time - prev_time > 35) {
+                # message_proc_id ! Get(self());
+                # receive {
+                #     case cursor -> {update_proc_id ! cursor; game_loop(curr_time) }
+                # }
+                var cursor =
+                    switch ((dom_get_int("cursor_x"), dom_get_int("cursor_y"))) {
+                        case (Just(x), Just(y)) -> Cursor(x, y)
+                        case (Nothing, Nothing) -> Cursor(gameWidth/2, gameHeight/2)
+                        case (Just(x), Nothing) -> Cursor(x, gameHeight/2)
+                        case (Nothing, Just(y)) -> Cursor(gameWidth/2, y)
+                    };
+                update_proc_id ! cursor;
+                game_loop(curr_time)
+            } else {
+                game_loop(prev_time)
+            }
+        }
+
+        game_loop(start_time)
     }
 
-    var input_proc_id = spawn{ input_state_loop([]: [Input]) };
+    var game_proc_id = spawn { game_proc() };
 
-    fun on_key_down(e) {
-        # print(intToString(getCharCode(e)));
-        input_proc_id ! (KeyDown(getCharCode(e)): Input);
-    }
-
-    fun on_key_up(e) {
-        input_proc_id ! (KeyUp(getCharCode(e)): Input);
-    }
-
-    fun on_mousemove(e) {
-        input_proc_id ! (Cursor((getPageX(e), getPageY(e))): Input);
-    }
-
-    master_proc_id ! (input_proc_id, KeyDown(-2): Input);
+#     fun on_key_down(e) {
+#         # print(intToString(getCharCode(e)));
+#         input_proc_id ! (KeyDown(getCharCode(e)): Input);
+#     }
+# 
+#     fun on_key_up(e) {
+#         input_proc_id ! (KeyUp(getCharCode(e)): Input);
+#     }
     
+    fun on_mousemove(e) {
+        var cursor = (getPageX(e), getPageY(e));
+        dom_store_int("cursor_x", cursor.1);
+        dom_store_int("cursor_y", cursor.2);
+        # message_proc_id ! Put(Cursor(cursor): Input);
+    }
+
     fun initialize() {
-        ignore(recv());
-
-        jsSetOnKeyDown(getNodeById("container"), on_key_down);
-        jsSetOnEvent(getNodeById("container"), "keyup", on_key_up, true);
+        
+        # jsSetOnKeyDown(getNodeById("container"), on_key_down);
+        # jsSetOnEvent(getNodeById("container"), "keyup", on_key_up, true);
         jsSetOnEvent(getNodeById("container"), "mousemove", on_mousemove, true);
-
-        update_proc_id ! ([]: [Input])
+        game_proc_id ! Cursor(0,0); 
     }
 
     var initialize_proc_id = spawn{ initialize() };
-                #<link rel="stylesheet" href="css/main.css"/>
+
     page
 
         <html>
@@ -497,13 +458,16 @@ fun main() client {
             </head>
             <body>
                 <div id="container" tabindex="1"
-                    l:onfocus="{initialize_proc_id ! 0}">
+                    l:onfocus="{ initialize() }">
                     <canvas id="{canvas1}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
                     <canvas id="{canvas2}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
                 </div>
                 Cursor position: <span id="mouse_x"></span> <span id="mouse_y"></span>
                 <br/>
                 Player position: <span id="player_x"></span> <span id="player_y"></span>
+
+                <div id="{state_node_id}" style="display:none;" ></div>
+
             </body>
         </html>
 }
