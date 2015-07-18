@@ -40,12 +40,13 @@ fun lsUnzip(l) {
 }
 
 fun lsDictAdd(k, v, dict) {
-    if (lsEmpty(dict))
-        lsCons((k, v), lsNilF())
-    else {
-        switch (lsHead(dict)) {
-            case (k, _) -> lsCons((k ,v), dict)
-            case (m, n) -> lsCons((m, n), lsDictAdd(k, v, lsTail(dict)))
+    switch (lsEmpty(dict)) {
+        case true -> lsCons((k, v), lsNilF())
+        case false -> {
+            if (k == lsHead(dict).1)
+                lsCons((k, v), lsTail(dict))
+            else
+                lsCons(lsHead(dict), lsDictAdd(k ,v, lsTail(dict)))
         }
     }
 }
@@ -80,7 +81,6 @@ fun get_int(name: String) {
         Just(stringToInt(domGetAttributeFromRef(state_node, name)))
     else
         Nothing
-    
 }
 
 
@@ -161,16 +161,6 @@ fun clear(ctx) {
     jsClearRect(ctx, 0.0, 0.0, jsCanvasWidth(ctx), jsCanvasHeight(ctx))
 }
 
-fun keyDown(code, inEvents) {
-    fun step(old, inp) {
-        if (inp == KeyUp(code)) false
-        else if (inp == KeyDown(code)) true
-        else old
-    }
-    
-    fold_left(step, false, inEvents)
-}
-
 fun player_radius(mass) {
     10.0 *. sqrt(intToFloat(mass)) /. pi
 }
@@ -218,7 +208,8 @@ fun initial_game_state() client {
 
     var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
     var player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
-    var players = lsCons((44, player_state), lsCons((22, player_state), lsNilF()));
+    # var players = lsCons((44, player_state), lsNilF());
+    var players = lsDictAdd(44, player_state, lsNilF());
     var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
     (screen=screen_state, players=players, food=food_state): GameState    
 }
@@ -288,19 +279,10 @@ fun draw(player_id, state: GameState) {
         ()
     }
 
-    fun draw_food(state: GameState) { 
+    fun draw_food() { 
         var food_state = state.food;
         var props = lsZip(food_state.pos, food_state.colour);
         lsMapIgnore(fun(prop){ 
-                        # jsBeginPath(ctx);
-                        # jsArc(ctx, (prop.1).1 -. player.x +. x_offset, 
-                        #            (prop.1).2 -. player.y +. y_offset,  
-                        #            food_radius, 0.0, 2.0 *. pi, false);
-                        # jsSetFillColor(ctx, prop.2);
-                        # jsFill(ctx);
-                        # jsLineWidth(ctx, 1.0);
-                        # jsStrokeStyle(ctx, "grey");
-                        # jsStroke(ctx)
                         draw_circle((prop.1).1 -. player.x +. x_offset, 
                                     (prop.1).2 -. player.y +. y_offset, 
                                     food_radius, 1.0, prop.2, "grey")
@@ -311,24 +293,31 @@ fun draw(player_id, state: GameState) {
                                           }, props))
     }
 
-    fun draw_player() {
-        # jsBeginPath(ctx);
-        # jsArc(ctx, screenWidthFloat /. 2.0, screenHeightFloat /. 2.0, 
-        #       player_radius(player.mass),
-        #       0.0, 2.0 *. pi, false);
-        # jsSetFillColor(ctx, player.colour.1);
-        # jsFill(ctx);
-        # jsLineWidth(ctx, 3.0);
-        # jsStrokeStyle(ctx, player.colour.2);
-        # jsStroke(ctx);
-        draw_circle(screenWidthFloat /. 2.0, screenHeightFloat /. 2.0,
-                    player_radius(player.mass), 3.0,
-                    player.colour.1, player.colour.2)
+    fun draw_players(players) {
+        if (lsEmpty(players))
+            ()
+        else {
+            switch (lsHead(players)) {
+                case (id, curr_player) -> {
+                    if (id == player_id) {
+                        draw_circle(screenWidthFloat /. 2.0, screenHeightFloat /. 2.0,
+                                    player_radius(curr_player.mass), 3.0,
+                                    curr_player.colour.1, curr_player.colour.2);
+                    } else {
+                        draw_circle(curr_player.x -. player.x +. x_offset,
+                                    curr_player.y -. player.y +. y_offset,
+                                    player_radius(curr_player.mass), 3.0,
+                                    curr_player.colour.1, curr_player.colour.2);
+                    };
+                    draw_players(lsTail(players))
+                }
+            }
+        }
     }
 
     draw_grid();
-    draw_food(state);
-    draw_player();
+    draw_food();
+    draw_players(state.players);
 
     swap_buffers(canvas_node, getNodeById(disp_canvas));
     ()
@@ -366,7 +355,6 @@ fun compute_player_position(player_state, cursor) {
         # don't update if player is at borders
         var x_new = if (x_p < 0.0) 0.0 else if (x_p > intToFloat(gameWidth)) intToFloat(gameWidth) else x_p;
         var y_new = if (y_p < 0.0) 0.0 else if (y_p > intToFloat(gameHeight)) intToFloat(gameHeight) else y_p;
-
         (x=x_new, y=y_new, mass=player_state.mass, colour=player_state.colour): PlayerState
     }
 }
@@ -388,19 +376,65 @@ fun update_food(player_id, state: GameState) {
      food=(pos=food_pos_p, colour=food_colour_p)): GameState
 }
 
+fun filter_eaten(player_state, players, remove_eaten) {
+    lsFilter( fun(x) {
+            var curr_player = x.2;
+            if (intToFloat(curr_player.mass) *. 1.7  < intToFloat(player_state.mass))
+                if (euclidean_dist((player_state.x, player_state.y), (curr_player.x, curr_player.y)) > player_radius(player_state.mass))
+                    remove_eaten
+                else
+                    not(remove_eaten)
+            else
+                remove_eaten
+        }, players)    
+}
+
+fun update_players(player_id, player_state: PlayerState, players) {
+    #filter out other players eaten by this player
+    var player_mass_p = lsFoldLeft((+), player_state.mass, lsMap(fun(x) {(x.2).mass}, filter_eaten(player_state, players, false)));
+    var players_p = filter_eaten(player_state, players, true);
+    lsDictAdd(player_id, (x=player_state.x,
+                          y=player_state.y,
+                          colour=player_state.colour,
+                          mass=player_mass_p), players_p)
+}
+
 fun update_logic(state: GameState, player_id: Int, in_event: Input) {
     var cursor_xy = switch(in_event) {
         case Cursor(x,y) -> (x,y)
         case _ -> (0,0)
     };
-
     var state_new = update_food(player_id, state);
     var player_state = fromJust(lsDictLookup(player_id, state_new.players));
+    # if (player_id == 22) {
+    #     print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state.y)));
+    #     var main_player_state = fromJust(lsDictLookup(44, state_new.players));
+    #     print("main: " ^^ intToString(floatToInt(main_player_state.x)) ^^ " " ^^ intToString(floatToInt(main_player_state.y)))
+    # } else {
+    #     if (lsLength(state.players) == 2)
+    #         print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state.y)))
+    #     else ();
+    # };
 
     var player_state_p = compute_player_position(player_state: PlayerState, cursor_xy);
 
+    # if (player_id == 22) {
+    #     print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state_p.x)))
+    #     }
+    # else ();
+
+
+    var players = update_players(player_id, player_state_p, state_new.players);
+
+    # if (player_id == 22) {
+    #     print(intToString((fromJust(lsDictLookup(22, players))).x))
+    # }
+    # else ();
+    # print(intToString(lsLength(players)));
+
     (screen=state_new.screen, 
-     players=lsDictAdd(player_id, player_state_p, state_new.players), 
+     # players=lsDictAdd(player_id, player_state_p, players),
+     players=players,
      food=state_new.food): GameState
 }
 
@@ -411,10 +445,11 @@ fun on_mousemove(e) {
     store_int("cursor_y", cursor.2);
 }
 
+
 ####
 typename StartGame = !String.?GameState.End;
-typename Game = [&| #StartGame: !String.?GameState.End,
-                    Move: !Int.!Input.?GameState.Game |&];#,
+#typename Game = [&| #StartGame: !String.?GameState.End,
+#                    Move: !Int.!Input.?GameState.Game |&];#,
                     # GameOver: !Input.?GameState.End |&];
 typename InputMsg = !Int.!Input.End;
 
@@ -423,17 +458,66 @@ fun playing(game_state, s) {
         case Move(s) -> {
             var (player_id, s) = receive(s);
             var (input, s) = receive(s);
+            # if (player_id == 22) 
+            #     switch (input) {
+            #         case Cursor(10, 10) -> print("yay")
+            #         case Cursor(x, y) -> print("nay")
+            #         case _ -> print("booo")
+            #     }
+            # else ();
             var game_state_new = update_logic(game_state, player_id, input);
+            playing(game_state_new, send(game_state_new, s))
+        }
+        case AddPlayer(s) -> {
+            var (player_id, s) = receive(s);
+            var new_player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+            var game_state_new = (screen=game_state.screen, food=game_state.food,
+                                  players=lsDictAdd(player_id, new_player_state, game_state.players));
             playing(game_state_new, send(game_state_new, s))
         }
     }
 }
 
 fun initialize() { 
-
-    jsSetOnEvent(getNodeById("container"), "mousemove", on_mousemove, true);
     var game_state_i = initial_game_state();
     var ap = new();
+
+
+    fun on_key_down(e) {
+        if (getCharCode(e) == 81) {     # that's Q
+            var _ = spawn {
+                var c = request(ap);
+                fun other_play(cp, game_state: GameState) {
+                    <| Move cp.cp[22].cp[ Cursor(10,10): Input].cp(new_game_state).{ (other_play(cp, new_game_state)) } |>
+                }
+
+                # <| NewPlayer c.c[22].c(game_state).{ other_play(c, game_state) } |>
+                <| NewPlayer c.c[22].c(game_state).{ (other_play(knife(fun(s) {playing(game_state, s)}), game_state)) } |>
+                # <| NewPlayer c.c[22].c(game_state).{()} |>
+            };
+            ()
+        } else ()
+    }
+
+#     fun on_key_down(e) {
+#         if (getCharCode(e) == 81) {     # that's Q
+#             var _ = spawn {
+#                 var c = request(ap);
+#                 fun other_play(game_state: GameState) {
+#                     var s = request(ap);
+#                     <| Move s.s[22].s[ Cursor(10,10): Input].s(new_game_state).{ (other_play(new_game_state)) } |>
+#                 }
+# 
+#                 <| NewPlayer c.c[22].c(game_state).{ other_play(game_state) } |>
+#                 # <| NewPlayer c.c[22].c(game_state).{ (other_play(knife(fun(s) {playing(game_state, s)}), game_state)) } |>
+#                 # <| NewPlayer c.c[22].c(game_state).{()} |>
+#             };
+#             ()
+#         } else ()
+#     }
+
+    jsSetOnEvent(getNodeById("container"), "mousemove", on_mousemove, true);
+    jsSetOnKeyDown(getNodeById("container"), on_key_down);
 
     var _ = spawn {
         fun play(c, game_state: GameState) {
@@ -442,6 +526,9 @@ fun initialize() {
                 case InputMsg -> s(player_id).s(input).{
                     <| Move c.c[player_id].c[input].c(new_game_state).{draw(player_id, new_game_state); 
                                                                        (play(c, new_game_state))} |>
+                }
+                case NewPlayer -> s(player_id).s[game_state].{
+                    <| AddPlayer c.c[player_id].c(new_game_state).{ (play(c, new_game_state)) } |>
                 }
             } |>
         }
@@ -462,7 +549,7 @@ fun initialize() {
                         case (Nothing, Just(y)) -> Cursor(gameWidth/2, y)
                     };
                 var c = request(ap);
-                <| InputMsg c.c[1].c[cursor].{game_loop(curr_time)} |>
+                <| InputMsg c.c[44].c[cursor].{game_loop(curr_time)} |>
             } else {
                 game_loop(prev_time)
             }
