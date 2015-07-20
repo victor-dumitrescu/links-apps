@@ -52,15 +52,25 @@ fun lsDictAdd(k, v, dict) {
 }
 
 fun lsDictLookup(k, dict) {
-    if (lsEmpty(dict))
-        Nothing
-    else {
-        switch (lsHead(dict)) {
-            case (k, val) -> Just(val)
-            case _ -> lsDictLookup(k, lsTail(dict))
+    switch(lsEmpty(dict)) {
+        case true -> Nothing
+        case false -> {
+            if (k == lsHead(dict).1)
+                Just(lsHead(dict).2)
+            else
+                lsDictLookup(k, lsTail(dict))
         }
     }
 }
+#     if (lsEmpty(dict))
+#         Nothing
+#     else {
+#         switch (lsHead(dict)) {
+#             case (k, val) -> Just(val)
+#             case _ -> lsDictLookup(k, lsTail(dict))
+#         }
+#     }
+# }
 ########
 
 var pi = 3.141593;
@@ -208,8 +218,8 @@ fun initial_game_state() client {
 
     var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
     var player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
-    # var players = lsCons((44, player_state), lsNilF());
-    var players = lsDictAdd(44, player_state, lsNilF());
+    # var players = lsCons((100, player_state), lsNilF());
+    var players = lsDictAdd(100, player_state, lsNilF());
     var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
     (screen=screen_state, players=players, food=food_state): GameState    
 }
@@ -406,9 +416,9 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
     };
     var state_new = update_food(player_id, state);
     var player_state = fromJust(lsDictLookup(player_id, state_new.players));
-    # if (player_id == 22) {
+    # if (player_id == 200) {
     #     print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state.y)));
-    #     var main_player_state = fromJust(lsDictLookup(44, state_new.players));
+    #     var main_player_state = fromJust(lsDictLookup(100, state_new.players));
     #     print("main: " ^^ intToString(floatToInt(main_player_state.x)) ^^ " " ^^ intToString(floatToInt(main_player_state.y)))
     # } else {
     #     if (lsLength(state.players) == 2)
@@ -418,7 +428,7 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
 
     var player_state_p = compute_player_position(player_state: PlayerState, cursor_xy);
 
-    # if (player_id == 22) {
+    # if (player_id == 200) {
     #     print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state_p.x)))
     #     }
     # else ();
@@ -426,8 +436,11 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
 
     var players = update_players(player_id, player_state_p, state_new.players);
 
-    # if (player_id == 22) {
-    #     print(intToString((fromJust(lsDictLookup(22, players))).x))
+    # if (player_id == 100) {
+    #     var oth = lsDictLookup(200, players);
+    #     if (isJust(oth))
+    #         print(intToString(fromJust(oth).x))
+    #     else ();
     # }
     # else ();
     # print(intToString(lsLength(players)));
@@ -447,18 +460,26 @@ fun on_mousemove(e) {
 
 
 ####
-typename StartGame = !String.?GameState.End;
+# typename StartGame = !String.?GameState.End;
 #typename Game = [&| #StartGame: !String.?GameState.End,
 #                    Move: !Int.!Input.?GameState.Game |&];#,
                     # GameOver: !Input.?GameState.End |&];
-typename InputMsg = !Int.!Input.End;
+typename Session1 = [&| Move: ?Int.?Input.!GameState.End,
+                        AddPlayer: ?Int.!GameState.End |&];
+typename Session2 = [&| InputMsg: ?Int.?Input.End,
+                        NewPlayer: ?Int.!GameState.End |&];
+# typename InputMsg = !Int.!Input.End;
 
-fun playing(game_state, s) {
-    offer(s) {
-        case Move(s) -> {
+var ap = new();
+var ap2 = new();
+
+fun playing(game_state) {
+    var (s: (Session1)) = accept(ap);
+    <| offer s {
+        case Move -> {
             var (player_id, s) = receive(s);
             var (input, s) = receive(s);
-            # if (player_id == 22) 
+            # if (player_id == 200) 
             #     switch (input) {
             #         case Cursor(10, 10) -> print("yay")
             #         case Cursor(x, y) -> print("nay")
@@ -466,74 +487,59 @@ fun playing(game_state, s) {
             #     }
             # else ();
             var game_state_new = update_logic(game_state, player_id, input);
-            playing(game_state_new, send(game_state_new, s))
+            ignore(send(game_state_new, s));
+            playing(game_state_new)
+            # playing(game_state_new, send(game_state_new, s))
         }
-        case AddPlayer(s) -> {
+        case AddPlayer -> {
             var (player_id, s) = receive(s);
             var new_player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
             var game_state_new = (screen=game_state.screen, food=game_state.food,
                                   players=lsDictAdd(player_id, new_player_state, game_state.players));
-            playing(game_state_new, send(game_state_new, s))
+            # playing(game_state_new, send(game_state_new, s))
+            ignore(send(game_state_new, s));
+            playing(game_state_new)
         }
-    }
+    } |>
 }
 
 fun initialize() { 
     var game_state_i = initial_game_state();
-    var ap = new();
 
+    var _ = spawn { playing(game_state_i)};
 
     fun on_key_down(e) {
         if (getCharCode(e) == 81) {     # that's Q
             var _ = spawn {
-                var c = request(ap);
-                fun other_play(cp, game_state: GameState) {
-                    <| Move cp.cp[22].cp[ Cursor(10,10): Input].cp(new_game_state).{ (other_play(cp, new_game_state)) } |>
+                var (c: (~Session2)) = request(ap2);
+                fun other_play(game_state: GameState) {
+                    var (cp: (~Session1)) = request(ap);
+                    <| Move cp.cp[200].cp[ Cursor(10,10): Input].cp(new_game_state).{ (other_play(new_game_state)) } |>
                 }
-
-                # <| NewPlayer c.c[22].c(game_state).{ other_play(c, game_state) } |>
-                <| NewPlayer c.c[22].c(game_state).{ (other_play(knife(fun(s) {playing(game_state, s)}), game_state)) } |>
-                # <| NewPlayer c.c[22].c(game_state).{()} |>
+                <| NewPlayer c.c[200].c(game_state).{ (other_play(game_state)) } |>
             };
             ()
         } else ()
     }
 
-#     fun on_key_down(e) {
-#         if (getCharCode(e) == 81) {     # that's Q
-#             var _ = spawn {
-#                 var c = request(ap);
-#                 fun other_play(game_state: GameState) {
-#                     var s = request(ap);
-#                     <| Move s.s[22].s[ Cursor(10,10): Input].s(new_game_state).{ (other_play(new_game_state)) } |>
-#                 }
-# 
-#                 <| NewPlayer c.c[22].c(game_state).{ other_play(game_state) } |>
-#                 # <| NewPlayer c.c[22].c(game_state).{ (other_play(knife(fun(s) {playing(game_state, s)}), game_state)) } |>
-#                 # <| NewPlayer c.c[22].c(game_state).{()} |>
-#             };
-#             ()
-#         } else ()
-#     }
-
     jsSetOnEvent(getNodeById("container"), "mousemove", on_mousemove, true);
     jsSetOnKeyDown(getNodeById("container"), on_key_down);
 
     var _ = spawn {
-        fun play(c, game_state: GameState) {
-            var s = accept(ap);
+        fun play(game_state: GameState) {
+            var (c: (~Session1)) = request(ap);
+            var (s: Session2) = accept(ap2);
             <| offer s {
                 case InputMsg -> s(player_id).s(input).{
                     <| Move c.c[player_id].c[input].c(new_game_state).{draw(player_id, new_game_state); 
-                                                                       (play(c, new_game_state))} |>
+                                                                       (play(new_game_state))} |>
                 }
                 case NewPlayer -> s(player_id).s[game_state].{
-                    <| AddPlayer c.c[player_id].c(new_game_state).{ (play(c, new_game_state)) } |>
+                    <| AddPlayer c.c[player_id].c(new_game_state).{ (play(new_game_state)) } |>
                 }
             } |>
         }
-
-        play(knife(fun(s) {playing(game_state_i, s)}), game_state_i)
+        play(game_state_i)
     };
     
     fun master_loop() {
@@ -548,8 +554,8 @@ fun initialize() {
                         case (Just(x), Nothing) -> Cursor(x, gameHeight/2)
                         case (Nothing, Just(y)) -> Cursor(gameWidth/2, y)
                     };
-                var c = request(ap);
-                <| InputMsg c.c[44].c[cursor].{game_loop(curr_time)} |>
+                var (c: (~Session2)) = request(ap2);
+                <| InputMsg c.c[100].c[cursor].{game_loop(curr_time)} |>
             } else {
                 game_loop(prev_time)
             }
