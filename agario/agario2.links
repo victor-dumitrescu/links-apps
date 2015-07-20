@@ -194,7 +194,7 @@ var y_offset = screenHeightFloat /. 2.0;
 var grid_lines_distance = 30;
 
 var step = 5.0;
-var base_velocity = 150.0;
+var base_velocity = 50.0;
 var base_food_count = 450;
 var food_radius = 10.0;
 
@@ -342,7 +342,7 @@ fun compute_player_mass(player_state) {
 }
 
 fun compute_player_position(player_state, cursor) {
-    var v = base_velocity /. intToFloat(player_state.mass);
+    var v = base_velocity /. sqrt(intToFloat(player_state.mass));
 
     # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
     var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. intToFloat(cursor.1)) /. screenWidthFloat;
