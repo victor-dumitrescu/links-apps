@@ -62,15 +62,19 @@ fun lsDictLookup(k, dict) {
         }
     }
 }
-#     if (lsEmpty(dict))
-#         Nothing
-#     else {
-#         switch (lsHead(dict)) {
-#             case (k, val) -> Just(val)
-#             case _ -> lsDictLookup(k, lsTail(dict))
-#         }
-#     }
-# }
+
+fun highest_mass_player(max_mass_player, dict) {
+    switch (lsEmpty(dict)) {
+        case true -> max_mass_player
+        case false -> {
+            var curr_player = lsHead(dict).2; 
+            if (max_mass_player.mass > curr_player.mass)
+                highest_mass_player(max_mass_player, lsTail(dict))
+            else
+                highest_mass_player(curr_player, lsTail(dict))
+        }
+    }
+}
 ########
 
 var pi = 3.141593;
@@ -101,18 +105,6 @@ typename PlayerState = (x: Float, y: Float, mass: Int, colour: (String, String))
 typename ScreenState = (x: Float, y: Float, scale: Float);
 typename FoodState = (pos: [(Float, Float)], colour: [String]);
 typename GameState = (screen: ScreenState, players: [(Int, PlayerState)], food: FoodState);
-
-
-fun print_input(in_events: [Input]) {
-    if (in_events == [])
-        ()
-    else
-        switch (hd(in_events)) {
-            case KeyUp(x) -> print("KeyUp " ^^ intToString(x))
-            case KeyDown(x) -> print("KeyDown " ^^ intToString(x))
-            case Cursor(x,y) -> print("Cursor " ^^ intToString(x) ^^ " " ^^ intToString(y))
-        }
-}
 
 fun dec_to_hex(d: Int) {
     # only works for 2-digit hex numbers
@@ -218,8 +210,7 @@ fun initial_game_state() client {
 
     var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
     var player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
-    # var players = lsCons((100, player_state), lsNilF());
-    var players = lsDictAdd(100, player_state, lsNilF());
+    var players = lsDictAdd(1, player_state, lsNilF());
     var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
     (screen=screen_state, players=players, food=food_state): GameState    
 }
@@ -246,9 +237,9 @@ fun draw(player_id, state: GameState) {
     var canvas_node = getNodeById(main_canvas);
     var ctx = jsGetContext2D(canvas_node);
 
-    var player = fromJust(lsDictLookup(player_id, state.players));
+    var player_maybe = lsDictLookup(player_id, state.players);
 
-    fun draw_grid() {
+    fun draw_grid(player) {
 
         jsLineWidth(ctx, 1.0);
         jsStrokeStyle(ctx, "#ddd");
@@ -289,7 +280,7 @@ fun draw(player_id, state: GameState) {
         ()
     }
 
-    fun draw_food() { 
+    fun draw_food(player) { 
         var food_state = state.food;
         var props = lsZip(food_state.pos, food_state.colour);
         lsMapIgnore(fun(prop){ 
@@ -303,7 +294,7 @@ fun draw(player_id, state: GameState) {
                                           }, props))
     }
 
-    fun draw_players(players) {
+    fun draw_players(player, players) {
         if (lsEmpty(players))
             ()
         else {
@@ -319,17 +310,28 @@ fun draw(player_id, state: GameState) {
                                     player_radius(curr_player.mass), 3.0,
                                     curr_player.colour.1, curr_player.colour.2);
                     };
-                    draw_players(lsTail(players))
+                    draw_players(player, lsTail(players))
                 }
             }
         }
     }
 
-    draw_grid();
-    draw_food();
-    draw_players(state.players);
-
+    # if alive, draw the player, else draw the biggest player remaining
+    var player = 
+        if (isJust(player_maybe))
+            fromJust(player_maybe)
+        else
+            highest_mass_player((x=500.0, y=500.0, mass=0, colour=("","")), state.players);
+    draw_grid(player);
+    draw_food(player);
+    draw_players(player, state.players);
     swap_buffers(canvas_node, getNodeById(disp_canvas));
+
+    if (player_maybe == Nothing) {
+        jsSetFillColor(ctx, "black");
+        jsCanvasFont(ctx, "36px Helvetica");
+        jsFillText(ctx, "Game over!", 260.0, 240.0);
+    } else ();
     ()
 }
 
@@ -371,25 +373,29 @@ fun compute_player_position(player_state, cursor) {
 
 fun update_food(player_id, state: GameState) {
     
-    var player = fromJust(lsDictLookup(player_id, state.players)); ###
-    # filter out food particles which are eaten by the player and update player mass accordingly
-    var player_pos = (player.x, player.y);
-    var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, player_pos) > player_radius(player.mass) },
-                                  lsZip(state.food.pos, state.food.colour));
-    var (food_pos_p, food_colour_p) = lsUnzip(zipped_food_p);
-    var player_p = (x=player.x, y=player.y, colour=player.colour,
-             mass=player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p)));
-    var players_p = lsDictAdd(player_id, player_p, state.players);
-    
-    (players=players_p,
-     screen=state.screen, 
-     food=(pos=food_pos_p, colour=food_colour_p)): GameState
+    var player_maybe = lsDictLookup(player_id, state.players);
+    if (isJust(player_maybe)) {
+        # filter out food particles which are eaten by the player and update player mass accordingly
+        var player = fromJust(player_maybe);
+        var player_pos = (player.x, player.y);
+        var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, player_pos) > player_radius(player.mass) },
+                                      lsZip(state.food.pos, state.food.colour));
+        var (food_pos_p, food_colour_p) = lsUnzip(zipped_food_p);
+        var player_p = (x=player.x, y=player.y, colour=player.colour,
+                 mass=player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p)));
+        var players_p = lsDictAdd(player_id, player_p, state.players);
+        
+        (players=players_p,
+         screen=state.screen, 
+         food=(pos=food_pos_p, colour=food_colour_p)): GameState
+    } else
+        state
 }
 
 fun filter_eaten(player_state, players, remove_eaten) {
     lsFilter( fun(x) {
             var curr_player = x.2;
-            if (intToFloat(curr_player.mass) *. 1.7  < intToFloat(player_state.mass))
+            if (intToFloat(curr_player.mass) *. 1.0  < intToFloat(player_state.mass)) ## TODO fix this 1.7
                 if (euclidean_dist((player_state.x, player_state.y), (curr_player.x, curr_player.y)) > player_radius(player_state.mass))
                     remove_eaten
                 else
@@ -415,40 +421,18 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
         case _ -> (0,0)
     };
     var state_new = update_food(player_id, state);
-    var player_state = fromJust(lsDictLookup(player_id, state_new.players));
-    # if (player_id == 200) {
-    #     print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state.y)));
-    #     var main_player_state = fromJust(lsDictLookup(100, state_new.players));
-    #     print("main: " ^^ intToString(floatToInt(main_player_state.x)) ^^ " " ^^ intToString(floatToInt(main_player_state.y)))
-    # } else {
-    #     if (lsLength(state.players) == 2)
-    #         print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state.y)))
-    #     else ();
-    # };
+    var player_state_maybe = lsDictLookup(player_id, state_new.players);
+    if (isJust(player_state_maybe)) {
+        var player_state = fromJust(player_state_maybe);
+        var player_state_p = compute_player_position(player_state: PlayerState, cursor_xy);
+        var players = update_players(player_id, player_state_p, state_new.players);
 
-    var player_state_p = compute_player_position(player_state: PlayerState, cursor_xy);
-
-    # if (player_id == 200) {
-    #     print(intToString(floatToInt(player_state.x)) ^^ " " ^^ intToString(floatToInt(player_state_p.x)))
-    #     }
-    # else ();
-
-
-    var players = update_players(player_id, player_state_p, state_new.players);
-
-    # if (player_id == 100) {
-    #     var oth = lsDictLookup(200, players);
-    #     if (isJust(oth))
-    #         print(intToString(fromJust(oth).x))
-    #     else ();
-    # }
-    # else ();
-    # print(intToString(lsLength(players)));
-
-    (screen=state_new.screen, 
-     # players=lsDictAdd(player_id, player_state_p, players),
-     players=players,
-     food=state_new.food): GameState
+        (screen=state_new.screen, 
+         # players=lsDictAdd(player_id, player_state_p, players),
+         players=players,
+         food=state_new.food): GameState
+    } else
+        state
 }
 
 ### EVENT LISTENER
@@ -460,43 +444,30 @@ fun on_mousemove(e) {
 
 
 ####
-# typename StartGame = !String.?GameState.End;
-#typename Game = [&| #StartGame: !String.?GameState.End,
-#                    Move: !Int.!Input.?GameState.Game |&];#,
-                    # GameOver: !Input.?GameState.End |&];
-typename Session1 = [&| Move: ?Int.?Input.!GameState.End,
-                        AddPlayer: ?Int.!GameState.End |&];
-typename Session2 = [&| InputMsg: ?Int.?Input.End,
-                        NewPlayer: ?Int.!GameState.End |&];
-# typename InputMsg = !Int.!Input.End;
+typename Game = [&| Move: ?Int.?Input.!Bool.!GameState.End,
+                    AddPlayer: ?Int.!GameState.End |&];
+typename Client = [&| InputMsg: ?Int.?Input.End,
+                      NewPlayer: !Int.!GameState.End |&];
 
-var ap = new();
-var ap2 = new();
+var ap = new();   # used for Game
+var ap2 = new();  # used for Client
 
 fun playing(game_state) {
-    var (s: (Session1)) = accept(ap);
+    var (s: (Game)) = accept(ap);
     <| offer s {
         case Move -> {
             var (player_id, s) = receive(s);
             var (input, s) = receive(s);
-            # if (player_id == 200) 
-            #     switch (input) {
-            #         case Cursor(10, 10) -> print("yay")
-            #         case Cursor(x, y) -> print("nay")
-            #         case _ -> print("booo")
-            #     }
-            # else ();
             var game_state_new = update_logic(game_state, player_id, input);
-            ignore(send(game_state_new, s));
+            var in_game = if (isJust(lsDictLookup(player_id, game_state.players))) true else false;
+            ignore(send(game_state_new, (send(true, s))));
             playing(game_state_new)
-            # playing(game_state_new, send(game_state_new, s))
         }
         case AddPlayer -> {
             var (player_id, s) = receive(s);
             var new_player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
             var game_state_new = (screen=game_state.screen, food=game_state.food,
                                   players=lsDictAdd(player_id, new_player_state, game_state.players));
-            # playing(game_state_new, send(game_state_new, s))
             ignore(send(game_state_new, s));
             playing(game_state_new)
         }
@@ -509,14 +480,19 @@ fun initialize() {
     var _ = spawn { playing(game_state_i)};
 
     fun on_key_down(e) {
-        if (getCharCode(e) == 81) {     # that's Q
+        if (getCharCode(e) == 81) {  #that's Q
             var _ = spawn {
-                var (c: (~Session2)) = request(ap2);
-                fun other_play(game_state: GameState) {
-                    var (cp: (~Session1)) = request(ap);
-                    <| Move cp.cp[200].cp[ Cursor(10,10): Input].cp(new_game_state).{ (other_play(new_game_state)) } |>
+                var (c: (~Client)) = request(ap2);
+                fun other_play(player_id, game_state: GameState, in_game: Bool) {
+                    if (in_game) {
+                        var (cp: (~Game)) = request(ap);
+                        <| Move cp.cp[player_id].
+                                   cp[ Cursor(floatToInt(700.0 *. random()), floatToInt(500.0 *. random())): Input].
+                                   cp(in_game).cp(new_game_state).{ (other_play(player_id, new_game_state, in_game)) } |>
+                    } else
+                        other_play(player_id, game_state, in_game)
                 }
-                <| NewPlayer c.c[200].c(game_state).{ (other_play(game_state)) } |>
+                <| NewPlayer c.c(player_id).c(game_state).{ ignore(spawn{(other_play(player_id, game_state, true))}) } |>
             };
             ()
         } else ()
@@ -526,20 +502,21 @@ fun initialize() {
     jsSetOnKeyDown(getNodeById("container"), on_key_down);
 
     var _ = spawn {
-        fun play(game_state: GameState) {
-            var (c: (~Session1)) = request(ap);
-            var (s: Session2) = accept(ap2);
+        fun play(game_state: GameState, player_count: Int) {
+            var (c: (~Game)) = request(ap);
+            var (s: Client) = accept(ap2);
             <| offer s {
                 case InputMsg -> s(player_id).s(input).{
-                    <| Move c.c[player_id].c[input].c(new_game_state).{draw(player_id, new_game_state); 
-                                                                       (play(new_game_state))} |>
+                    <| Move c.c[player_id].c[input].
+                              c(in_game).c(new_game_state).{ if(in_game) draw(player_id, new_game_state) else (); 
+                                                                       (play(new_game_state, player_count))} |>
                 }
-                case NewPlayer -> s(player_id).s[game_state].{
-                    <| AddPlayer c.c[player_id].c(new_game_state).{ (play(new_game_state)) } |>
+                case NewPlayer -> s[player_count+1].s[game_state].{
+                    <| AddPlayer c.c[player_count+1].c(new_game_state).{ (play(new_game_state, player_count+1)) } |>
                 }
             } |>
         }
-        play(game_state_i)
+        play(game_state_i, 1)
     };
     
     fun master_loop() {
@@ -554,8 +531,8 @@ fun initialize() {
                         case (Just(x), Nothing) -> Cursor(x, gameHeight/2)
                         case (Nothing, Just(y)) -> Cursor(gameWidth/2, y)
                     };
-                var (c: (~Session2)) = request(ap2);
-                <| InputMsg c.c[100].c[cursor].{game_loop(curr_time)} |>
+                var (c: (~Client)) = request(ap2);
+                <| InputMsg c.c[1].c[cursor].{game_loop(curr_time)} |>
             } else {
                 game_loop(prev_time)
             }
