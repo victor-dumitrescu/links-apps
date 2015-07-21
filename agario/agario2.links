@@ -515,9 +515,15 @@ fun get_initial_game_state(s, name) {
     <| Start s.s[name].s(state).{state} |>
 }
 
-fun initialize() client { 
-    var game_state_i = get_initial_game_state(knife(initial_game_state), "victor");
+fun initialize(player_name) client { 
 
+    replaceNode(<div id="container" tabindex="1"> 
+                    <canvas id="{canvas1}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
+                    <canvas id="{canvas2}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/> 
+                </div>,
+                getNodeById("container"));
+    
+    var game_state_i = get_initial_game_state(knife(initial_game_state), player_name);
     var _ = spawn { playing(game_state_i)};
 
     fun on_key_down(e) {
@@ -614,14 +620,21 @@ fun main() {
                         width: {stringToXml(intToString(screenWidth))}px;
                         height: {stringToXml(intToString(screenHeight))}px;
                     }}
+                    #name_form {{
+                        position: relative;
+                        left: {stringToXml(intToString(screenWidth/2))}px;
+                        top: {stringToXml(intToString(screenHeight/2))}px;
+                    }}
                 </style>
             </head>
             <body>
-                <div id="container" tabindex="1"
-                    l:onfocus="{ initialize() }">
-                    <canvas id="{canvas1}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
-                    <canvas id="{canvas2}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
-                    <div id="overlay">stuff</div>
+                <div id="container">
+                    <div id="name_form">
+                        Agar.io
+                        <form l:onsubmit="{initialize(player_name)}">
+                            <input type="text" l:name="player_name" autofocus="autofocus"/>
+                        </form>
+                    </div>
                 </div>
 
                 <div id="{state_node_id}" style="display:none;" ></div>
