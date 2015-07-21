@@ -101,10 +101,16 @@ fun get_int(name: String) {
 ########################################################################
 
 typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
-typename PlayerState = (x: Float, y: Float, mass: Int, colour: (String, String));
+typename PlayerState = (name: String, x: Float, y: Float, mass: Int, colour: (String, String));
 typename ScreenState = (x: Float, y: Float, scale: Float);
 typename FoodState = (pos: [(Float, Float)], colour: [String]);
 typename GameState = (screen: ScreenState, players: [(Int, PlayerState)], food: FoodState);
+
+typename Game = [&| Move: ?Int.?Input.!Bool.!GameState.End,
+                    AddPlayer: ?Int.?String.!GameState.End |&];
+typename Client = [&| InputMsg: ?Int.?Input.End,
+                      NewPlayer: ?String.!Int.!GameState.End |&];
+typename InitiateGame = [&| Start: ?String.!GameState.End |&];
 
 fun dec_to_hex(d: Int) {
     # only works for 2-digit hex numbers
@@ -200,8 +206,8 @@ var base_velocity = 50.0;
 var base_food_count = 450;
 var food_radius = 10.0;
 
-fun initial_game_state() client {
-
+sig initial_game_state: (InitiateGame) ~> ()
+fun initial_game_state(s) {
     fun initialize_food(gameWidth, gameHeight, food_count) {
         var range = lsRange(0, food_count);
         var positions = lsZip(lsMap(fun(x) {intToFloat(gameWidth) *. random()}, range),
@@ -210,11 +216,17 @@ fun initial_game_state() client {
         (pos=positions, colour=colour): FoodState
     }
 
-    var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
-    var player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
-    var players = lsDictAdd(1, player_state, lsNilF());
-    var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
-    (screen=screen_state, players=players, food=food_state): GameState    
+    offer(s) {
+        case Start(s) ->
+            var (player_name, s) = receive(s); 
+            var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
+            var player_state = (name=player_name, x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+            var players = lsDictAdd(1, player_state, lsNilF());
+            var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
+            var state = (screen=screen_state, players=players, food=food_state): GameState;
+            ignore(send(state, s))
+    }
+
 }
 
 
@@ -282,6 +294,16 @@ fun draw(player_id, state: GameState) {
         ()
     }
 
+    fun draw_player_name(player, x, y) {
+        jsSetFillColor(ctx, "black");
+        var font_size = floatToInt(8.0 *. sqrt(sqrt(intToFloat(player.mass))));
+        jsCanvasFont(ctx, intToString(font_size) ^^ "px Ubuntu");
+
+        var draw_x = x -. 0.22 *. intToFloat(length(explode(player.name)) * font_size);
+        var draw_y = y +. 0.22 *. intToFloat(font_size);
+        jsFillText(ctx, player.name, draw_x, draw_y)
+    }
+
     fun draw_food(player) { 
         var food_state = state.food;
         var props = lsZip(food_state.pos, food_state.colour);
@@ -303,14 +325,19 @@ fun draw(player_id, state: GameState) {
             switch (lsHead(players)) {
                 case (id, curr_player) -> {
                     if (id == player_id) {
-                        draw_circle(screenWidthFloat /. 2.0, screenHeightFloat /. 2.0,
+                        var draw_x = screenWidthFloat /. 2.0;
+                        var draw_y = screenHeightFloat /. 2.0;
+                        draw_circle(draw_x, draw_y,
                                     player_radius(curr_player.mass), 3.0,
                                     curr_player.colour.1, curr_player.colour.2);
+                        draw_player_name(curr_player, draw_x, draw_y);
                     } else {
-                        draw_circle(curr_player.x -. player.x +. x_offset,
-                                    curr_player.y -. player.y +. y_offset,
+                        var draw_x = curr_player.x -. player.x +. x_offset;
+                        var draw_y = curr_player.y -. player.y +. y_offset;
+                        draw_circle(draw_x, draw_y,
                                     player_radius(curr_player.mass), 3.0,
                                     curr_player.colour.1, curr_player.colour.2);
+                        draw_player_name(curr_player, draw_x, draw_y);
                     };
                     draw_players(player, lsTail(players))
                 }
@@ -332,7 +359,7 @@ fun draw(player_id, state: GameState) {
     if (player_maybe == Nothing) {
         jsSetFillColor(ctx, "black");
         jsCanvasFont(ctx, "60px Ubuntu");
-        jsFillText(ctx, "Game over!", 220.0, 220.0);
+        jsFillText(ctx, "Game over!", 230.0, 220.0);
     } else ();
     ()
 }
@@ -353,7 +380,8 @@ fun compute_player_position(player_state, cursor) {
     var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
 
     if (delta_x_norm == 0.0 && delta_y_norm == 0.0) 
-        (x=player_state.x, y=player_state.y, mass=compute_player_mass(player_state), colour=player_state.colour): PlayerState            
+        (x=player_state.x, y=player_state.y, mass=compute_player_mass(player_state), 
+         name=player_state.name, colour=player_state.colour): PlayerState            
     else {
         # compute velocity components depending on ratio of deltas so that total velocity remains constant
         var delta_ratio = if (delta_y_norm == 0.0) 
@@ -369,7 +397,7 @@ fun compute_player_position(player_state, cursor) {
         # don't update if player is at borders
         var x_new = if (x_p < 0.0) 0.0 else if (x_p > intToFloat(gameWidth)) intToFloat(gameWidth) else x_p;
         var y_new = if (y_p < 0.0) 0.0 else if (y_p > intToFloat(gameHeight)) intToFloat(gameHeight) else y_p;
-        (x=x_new, y=y_new, mass=player_state.mass, colour=player_state.colour): PlayerState
+        (x=x_new, y=y_new, mass=player_state.mass, colour=player_state.colour, name=player_state.name): PlayerState
     }
 }
 
@@ -393,8 +421,8 @@ fun update_food(player_id, state: GameState) {
             else
                 (pos=food_pos_p, colour=food_colour_p);
         
-        var player_p = (x=player.x, y=player.y, colour=player.colour,
-                 mass=player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p)));
+        var player_p = (x=player.x, y=player.y, colour=player.colour, name=player.name,
+                 mass=player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p))): PlayerState;
         var players_p = lsDictAdd(player_id, player_p, state.players);
         
         (players=players_p, screen=state.screen, food=food_p): GameState
@@ -405,7 +433,7 @@ fun update_food(player_id, state: GameState) {
 fun filter_eaten(player_state, players, remove_eaten) {
     lsFilter( fun(x) {
             var curr_player = x.2;
-            if (intToFloat(curr_player.mass) *. 1.2  < intToFloat(player_state.mass))
+            if (intToFloat(curr_player.mass) *. 1.0  < intToFloat(player_state.mass))
                 if (euclidean_dist((player_state.x, player_state.y), (curr_player.x, curr_player.y)) > player_radius(player_state.mass))
                     remove_eaten
                 else
@@ -422,7 +450,8 @@ fun update_players(player_id, player_state: PlayerState, players) {
     lsDictAdd(player_id, (x=player_state.x,
                           y=player_state.y,
                           colour=player_state.colour,
-                          mass=player_mass_p), players_p)
+                          name=player_state.name,
+                          mass=player_mass_p): PlayerState, players_p)
 }
 
 fun update_logic(state: GameState, player_id: Int, in_event: Input) {
@@ -454,11 +483,6 @@ fun on_mousemove(e) {
 
 
 ####
-typename Game = [&| Move: ?Int.?Input.!Bool.!GameState.End,
-                    AddPlayer: ?Int.!GameState.End |&];
-typename Client = [&| InputMsg: ?Int.?Input.End,
-                      NewPlayer: !Int.!GameState.End |&];
-
 var ap = new();   # used for Game
 var ap2 = new();  # used for Client
 
@@ -475,7 +499,9 @@ fun playing(game_state) {
         }
         case AddPlayer -> {
             var (player_id, s) = receive(s);
-            var new_player_state = (x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+            var (player_name, s) = receive(s);
+            var new_player_state = (name=player_name, x=500.0, y=500.0, 
+                                    mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
             var game_state_new = (screen=game_state.screen, food=game_state.food,
                                   players=lsDictAdd(player_id, new_player_state, game_state.players));
             ignore(send(game_state_new, s));
@@ -484,8 +510,13 @@ fun playing(game_state) {
     } |>
 }
 
-fun initialize() { 
-    var game_state_i = initial_game_state();
+sig get_initial_game_state: ((~InitiateGame), String) ~> GameState
+fun get_initial_game_state(s, name) {
+    <| Start s.s[name].s(state).{state} |>
+}
+
+fun initialize() client { 
+    var game_state_i = get_initial_game_state(knife(initial_game_state), "victor");
 
     var _ = spawn { playing(game_state_i)};
 
@@ -503,7 +534,7 @@ fun initialize() {
                     } else
                         other_play(player_id, game_state, in_game)
                 }
-                <| NewPlayer c.c(player_id).c(game_state).{ ignore(spawn{(other_play(player_id, game_state, true))}) } |>
+                <| NewPlayer c.c["bot"].c(player_id).c(game_state).{ ignore(spawn{(other_play(player_id, game_state, true))}) } |>
             };
             ()
         } else ()
@@ -522,11 +553,12 @@ fun initialize() {
                               c(in_game).c(new_game_state).{ if(in_game) draw(player_id, new_game_state) else (); 
                                                                        (play(new_game_state, player_count))} |>
                 }
-                case NewPlayer -> s[player_count+1].s[game_state].{
-                    <| AddPlayer c.c[player_count+1].c(new_game_state).{ (play(new_game_state, player_count+1)) } |>
+                case NewPlayer -> s(name).s[player_count+1].s[game_state].{
+                    <| AddPlayer c.c[player_count+1].c[name].c(new_game_state).{ (play(new_game_state, player_count+1)) } |>
                 }
             } |>
         }
+
         play(game_state_i, 1)
     };
     
@@ -586,9 +618,10 @@ fun main() {
             </head>
             <body>
                 <div id="container" tabindex="1"
-                    l:onclick="{ initialize() }">
+                    l:onfocus="{ initialize() }">
                     <canvas id="{canvas1}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
                     <canvas id="{canvas2}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
+                    <div id="overlay">stuff</div>
                 </div>
 
                 <div id="{state_node_id}" style="display:none;" ></div>
