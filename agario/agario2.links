@@ -185,8 +185,10 @@ var canvas2 = "canvas2";
 
 var gameWidth = 2000;
 var gameHeight = 2000;
-var screenWidth = 700;
-var screenHeight = 500;
+# var screenWidth = 700;
+# var screenHeight = 500;
+var screenWidth = 800;
+var screenHeight = 600;
 var screenWidthFloat = intToFloat(screenWidth);
 var screenHeightFloat = intToFloat(screenHeight);
 var x_offset = screenWidthFloat /. 2.0;
@@ -329,8 +331,8 @@ fun draw(player_id, state: GameState) {
 
     if (player_maybe == Nothing) {
         jsSetFillColor(ctx, "black");
-        jsCanvasFont(ctx, "36px Helvetica");
-        jsFillText(ctx, "Game over!", 260.0, 240.0);
+        jsCanvasFont(ctx, "60px Ubuntu");
+        jsFillText(ctx, "Game over!", 220.0, 220.0);
     } else ();
     ()
 }
@@ -381,13 +383,21 @@ fun update_food(player_id, state: GameState) {
         var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, player_pos) > player_radius(player.mass) },
                                       lsZip(state.food.pos, state.food.colour));
         var (food_pos_p, food_colour_p) = lsUnzip(zipped_food_p);
+
+        # nondeterministically replenish eaten food with increasing probability as
+        # food amount decreases
+        var food_p =
+            if (random() < 1.0 -. intToFloat(lsLength(food_pos_p)) /. intToFloat(base_food_count))
+                (pos=lsCons((intToFloat(gameWidth) *. random(), intToFloat(gameHeight) *. random()), food_pos_p),
+                 colour=lsCons(random_colour(-.1.0, 0.8, 0.9), food_colour_p))
+            else
+                (pos=food_pos_p, colour=food_colour_p);
+        
         var player_p = (x=player.x, y=player.y, colour=player.colour,
                  mass=player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p)));
         var players_p = lsDictAdd(player_id, player_p, state.players);
         
-        (players=players_p,
-         screen=state.screen, 
-         food=(pos=food_pos_p, colour=food_colour_p)): GameState
+        (players=players_p, screen=state.screen, food=food_p): GameState
     } else
         state
 }
@@ -395,7 +405,7 @@ fun update_food(player_id, state: GameState) {
 fun filter_eaten(player_state, players, remove_eaten) {
     lsFilter( fun(x) {
             var curr_player = x.2;
-            if (intToFloat(curr_player.mass) *. 1.0  < intToFloat(player_state.mass)) ## TODO fix this 1.7
+            if (intToFloat(curr_player.mass) *. 1.2  < intToFloat(player_state.mass))
                 if (euclidean_dist((player_state.x, player_state.y), (curr_player.x, curr_player.y)) > player_radius(player_state.mass))
                     remove_eaten
                 else
@@ -487,7 +497,8 @@ fun initialize() {
                     if (in_game) {
                         var (cp: (~Game)) = request(ap);
                         <| Move cp.cp[player_id].
-                                   cp[ Cursor(floatToInt(700.0 *. random()), floatToInt(500.0 *. random())): Input].
+                                   cp[ Cursor(floatToInt(intToFloat(screenWidth) *. random()), 
+                                              floatToInt(intToFloat(screenHeight) *. random())): Input].
                                    cp(in_game).cp(new_game_state).{ (other_play(player_id, new_game_state, in_game)) } |>
                     } else
                         other_play(player_id, game_state, in_game)
@@ -553,7 +564,24 @@ fun main() {
                 <style>
                     body {{
                         margin: 0;
-                        }}
+                    }}
+                    #{stringToXml(canvas1)} {{
+                        display: none;
+                        position: absolute;
+                        top: 0px;
+                        left: 0px;
+                    }}
+                    #{stringToXml(canvas2)} {{
+                        display: block;
+                        position: absolute;
+                        top: 0px;
+                        left: 0px;
+                    }}
+                    #{stringToXml("container")} {{
+                        position: relative;
+                        width: {stringToXml(intToString(screenWidth))}px;
+                        height: {stringToXml(intToString(screenHeight))}px;
+                    }}
                 </style>
             </head>
             <body>
