@@ -1,3 +1,7 @@
+fun itos(x) { intToString(x) }
+fun ftoi(x) { floatToInt(x) }
+fun itof(x) { intToFloat(x) }
+
 #
 # LISTS
 #
@@ -86,7 +90,7 @@ fun floatAbs(a: Float) {
 
 fun store_int(name: String, value: Int) {
     var state_node = getNodeById(state_node_id);
-    ignore(domSetAttributeFromRef(state_node, name, intToString(value)))
+    ignore(domSetAttributeFromRef(state_node, name, itos(value)))
 }
 
 fun get_int(name: String) {
@@ -123,13 +127,13 @@ fun dec_to_hex(d: Int) {
                                     case "14" -> "E"
                                     case "15" -> "F"
                                     case x -> x}}, 
-                         lsMap(intToString, hex));
+                         lsMap(itos, hex));
     lsHead(hex_str) ^^ lsHead(lsTail(hex_str))
 }
 
 fun hsv_to_rgb(h: Float, s: Float, v: Float) {
-    var h_i = floatToInt(6.0 *. h);
-    var f = (6.0 *. h) -. intToFloat(h_i);
+    var h_i = ftoi(6.0 *. h);
+    var f = (6.0 *. h) -. itof(h_i);
     var p = v *. (1.0 -. s);
     var q = v *. (1.0 -. f *. s);
     var t = v *. (1.0 -. (1.0 -. f) *. s);
@@ -142,7 +146,7 @@ fun hsv_to_rgb(h: Float, s: Float, v: Float) {
                 case 4 -> ls([t, p, v])
                 case 5 -> ls([v, p ,q])
             };
-    lsMap(fun(x) {dec_to_hex(floatToInt(256.0 *. x))}, rgb)
+    lsMap(fun(x) {dec_to_hex(ftoi(256.0 *. x))}, rgb)
 }
 
 fun random_colour(h: Float, s:Float, v: Float) {
@@ -169,8 +173,12 @@ fun clear(ctx) {
     jsClearRect(ctx, 0.0, 0.0, jsCanvasWidth(ctx), jsCanvasHeight(ctx))
 }
 
+fun get_scale(mass) {
+    1.0 /. (1.0 +. 0.01 *. sqrt(itof(mass - 20)))
+}
+
 fun player_radius(mass) {
-    10.0 *. sqrt(intToFloat(mass)) /. pi
+    10.0 *. sqrt(itof(mass)) /. pi
 }
 
 fun euclidean_dist((x1, y1), (x2, y2)) {
@@ -191,15 +199,13 @@ var canvas2 = "canvas2";
 
 var gameWidth = 2000;
 var gameHeight = 2000;
-# var screenWidth = 700;
-# var screenHeight = 500;
 var screenWidth = 800;
 var screenHeight = 600;
-var screenWidthFloat = intToFloat(screenWidth);
-var screenHeightFloat = intToFloat(screenHeight);
+var screenWidthFloat = itof(screenWidth);
+var screenHeightFloat = itof(screenHeight);
 var x_offset = screenWidthFloat /. 2.0;
 var y_offset = screenHeightFloat /. 2.0;
-var grid_lines_distance = 30;
+var grid_lines_distance = 40;
 
 var step = 5.0;
 var base_velocity = 50.0;
@@ -210,8 +216,8 @@ sig initial_game_state: (InitiateGame) ~> ()
 fun initial_game_state(s) {
     fun initialize_food(gameWidth, gameHeight, food_count) {
         var range = lsRange(0, food_count);
-        var positions = lsZip(lsMap(fun(x) {intToFloat(gameWidth) *. random()}, range),
-                              lsMap(fun(x) {intToFloat(gameHeight) *. random()}, range));
+        var positions = lsZip(lsMap(fun(x) {itof(gameWidth) *. random()}, range),
+                              lsMap(fun(x) {itof(gameHeight) *. random()}, range));
         var colour = lsMap(fun(x) {random_colour(-.1.0, 0.8, 0.9)}, range);
         (pos=positions, colour=colour): FoodState
     }
@@ -220,7 +226,7 @@ fun initial_game_state(s) {
         case Start(s) ->
             var (player_name, s) = receive(s); 
             var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
-            var player_state = (name=player_name, x=500.0, y=500.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+            var player_state = (name=player_name, x=1000.0, y=1000.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
             var players = lsDictAdd(1, player_state, lsNilF());
             var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
             var state = (screen=screen_state, players=players, food=food_state): GameState;
@@ -242,40 +248,39 @@ fun swap_buffers(main_canvas_node, disp_canvas_node) {
 
 fun draw(player_id, state: GameState) {
 
+    # double buffering: swap the canvases' display attribute
     var (main_canvas, disp_canvas) = 
         if (domGetStyleAttrFromRef(getNodeById(canvas1), "display") == "none")
             (canvas1, canvas2)
         else
             (canvas2, canvas1);
-
     var canvas_node = getNodeById(main_canvas);
     var ctx = jsGetContext2D(canvas_node);
 
-    var player_maybe = lsDictLookup(player_id, state.players);
+    fun draw_grid(player, scale) {
 
-    fun draw_grid(player) {
-
-        jsLineWidth(ctx, 1.0);
+        jsLineWidth(ctx, scale);
         jsStrokeStyle(ctx, "#ddd");
+        var grid_lines_distance = ftoi(scale *. itof(grid_lines_distance));
 
         jsBeginPath(ctx);
-        var xs = lsFilter(fun(x) { x > player.x -. x_offset &&
-                                   x < player.x +. x_offset},
-                          lsMap(fun(x){ intToFloat(grid_lines_distance * x) },
+        var xs = lsFilter(fun(x) { x /. scale > player.x *. scale -. x_offset /. scale &&
+                                   x *. scale < player.x /. scale +. x_offset *. scale},
+                          lsMap(fun(x){ itof(grid_lines_distance * x) },
                                 lsRange(-screenWidth/2/grid_lines_distance, 
                                         (gameWidth+screenWidth/2)/grid_lines_distance)));
-        lsMapIgnore(fun(x){ jsMoveTo(ctx, x -. player.x +. x_offset, 0.0);
-                            jsLineTo(ctx, x -. player.x +. x_offset, screenHeightFloat);
+        lsMapIgnore(fun(x){ jsMoveTo(ctx, (x -. player.x) *. scale +. x_offset, 0.0);
+                            jsLineTo(ctx, (x -. player.x) *. scale +. x_offset, screenHeightFloat);
                             jsStroke(ctx)},
                             xs);
 
-        var ys = lsFilter(fun(y) { y > player.y -. y_offset &&
-                                   y < player.y +. y_offset},
-                          lsMap(fun(y){ intToFloat(grid_lines_distance * y) }, 
+        var ys = lsFilter(fun(y) { y /. scale > player.y *. scale -. y_offset /. scale &&
+                                   y *. scale < player.y /. scale +. y_offset *. scale},
+                          lsMap(fun(y){ itof(grid_lines_distance * y) }, 
                                 lsRange(-screenHeight/2/grid_lines_distance, 
                                         (gameHeight+screenHeight/2)/grid_lines_distance)));
-        lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, y -. player.y +. y_offset);
-                            jsLineTo(ctx, screenWidthFloat, y -. player.y +. y_offset);
+        lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, (y -. player.y) *. scale +. y_offset);
+                            jsLineTo(ctx, screenWidthFloat, (y -. player.y) *. scale +. y_offset);
                             jsStroke(ctx)},
                             ys);
 
@@ -283,12 +288,13 @@ fun draw(player_id, state: GameState) {
         
     }
 
-    fun draw_circle(x: Float, y: Float, r: Float, border_width: Float, fill_colour: String, border_colour: String) {
+    fun draw_circle(x: Float, y: Float, r: Float, border_width: Float, 
+                    fill_colour: String, border_colour: String, scale: Float) {
         jsBeginPath(ctx);
-        jsArc(ctx, x, y, r, 0.0, 2.0 *. pi, false);
+        jsArc(ctx, x, y, r *. scale, 0.0, 2.0 *. pi, false);
         jsSetFillColor(ctx, fill_colour);
         jsFill(ctx);
-        jsLineWidth(ctx, border_width);
+        jsLineWidth(ctx, border_width *. scale);
         jsStrokeStyle(ctx, border_colour);
         jsStroke(ctx);
         ()
@@ -296,64 +302,64 @@ fun draw(player_id, state: GameState) {
 
     fun draw_player_name(player, x, y) {
         jsSetFillColor(ctx, "black");
-        var font_size = floatToInt(8.0 *. sqrt(sqrt(intToFloat(player.mass))));
-        jsCanvasFont(ctx, intToString(font_size) ^^ "px Ubuntu");
+        var font_size = ftoi(8.0 *. sqrt(sqrt(itof(player.mass))));
+        jsCanvasFont(ctx, itos(font_size) ^^ "px Ubuntu");
 
-        var draw_x = x -. 0.22 *. intToFloat(length(explode(player.name)) * font_size);
-        var draw_y = y +. 0.22 *. intToFloat(font_size);
+        var draw_x = x -. 0.22 *. itof(length(explode(player.name)) * font_size);
+        var draw_y = y +. 0.22 *. itof(font_size);
         jsFillText(ctx, player.name, draw_x, draw_y)
     }
 
-    fun draw_food(player) { 
+    fun draw_food(player, scale) { 
         var food_state = state.food;
-        var props = lsZip(food_state.pos, food_state.colour);
-        lsMapIgnore(fun(prop){ 
-                        draw_circle((prop.1).1 -. player.x +. x_offset, 
-                                    (prop.1).2 -. player.y +. y_offset, 
-                                    food_radius, 1.0, prop.2, "grey")
-                    }, lsFilter(fun(prop) { (prop.1).1 > player.x -. x_offset -. food_radius &&
-                                            (prop.1).1 < player.x +. x_offset +. food_radius &&
-                                            (prop.1).2 > player.y -. y_offset -. food_radius &&
-                                            (prop.1).2 < player.y +. y_offset +. food_radius
-                                          }, props))
+        var cells = lsZip(food_state.pos, food_state.colour);
+        lsMapIgnore(fun(cell){ 
+                        draw_circle(((cell.1).1 -. player.x) *. scale +. x_offset, 
+                                    ((cell.1).2 -. player.y) *. scale +. y_offset, 
+                                    food_radius, 1.0, cell.2, "grey", scale)
+                    }, cells)
     }
 
-    fun draw_players(player, players) {
+    fun draw_players(player, players, scale) {
         if (lsEmpty(players))
             ()
         else {
             switch (lsHead(players)) {
                 case (id, curr_player) -> {
                     if (id == player_id) {
-                        var draw_x = screenWidthFloat /. 2.0;
-                        var draw_y = screenHeightFloat /. 2.0;
+                        var draw_x = x_offset;
+                        var draw_y = y_offset;
                         draw_circle(draw_x, draw_y,
                                     player_radius(curr_player.mass), 3.0,
-                                    curr_player.colour.1, curr_player.colour.2);
+                                    curr_player.colour.1, curr_player.colour.2, scale);
                         draw_player_name(curr_player, draw_x, draw_y);
                     } else {
-                        var draw_x = curr_player.x -. player.x +. x_offset;
-                        var draw_y = curr_player.y -. player.y +. y_offset;
+                        var draw_x = (curr_player.x -. player.x) *. scale +. x_offset;
+                        var draw_y = (curr_player.y -. player.y) *. scale +. y_offset;
                         draw_circle(draw_x, draw_y,
                                     player_radius(curr_player.mass), 3.0,
-                                    curr_player.colour.1, curr_player.colour.2);
+                                    curr_player.colour.1, curr_player.colour.2, scale);
                         draw_player_name(curr_player, draw_x, draw_y);
                     };
-                    draw_players(player, lsTail(players))
+                    draw_players(player, lsTail(players), scale)
                 }
             }
         }
     }
 
     # if alive, draw the player, else draw the biggest player remaining
+    var player_maybe = lsDictLookup(player_id, state.players);
     var player = 
         if (isJust(player_maybe))
             fromJust(player_maybe)
         else
-            highest_mass_player((x=500.0, y=500.0, mass=0, colour=("","")), state.players);
-    draw_grid(player);
-    draw_food(player);
-    draw_players(player, state.players);
+            highest_mass_player((x=1000.0, y=1000.0, mass=0, colour=("","")), state.players);
+    # var scale = 1.0 /. (1.0 +. 0.01 *. sqrt(itof(player.mass - 20)));
+    var scale = get_scale(player.mass);
+
+    draw_grid(player, scale);
+    draw_food(player, scale);
+    draw_players(player, state.players, scale);
     swap_buffers(canvas_node, getNodeById(disp_canvas));
 
     if (player_maybe == Nothing) {
@@ -371,11 +377,11 @@ fun compute_player_mass(player_state) {
 }
 
 fun compute_player_position(player_state, cursor) {
-    var v = base_velocity /. sqrt(intToFloat(player_state.mass));
+    var v = base_velocity /. sqrt(itof(player_state.mass));
 
     # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
-    var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. intToFloat(cursor.1)) /. screenWidthFloat;
-    var delta_y_norm = 2.0 *. (screenHeightFloat /. 2.0 -. intToFloat(cursor.2)) /. screenHeightFloat;
+    var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. itof(cursor.1)) /. screenWidthFloat;
+    var delta_y_norm = 2.0 *. (screenHeightFloat /. 2.0 -. itof(cursor.2)) /. screenHeightFloat;
     var dir_x = if (delta_x_norm > 0.0) -.1.0 else 1.0;
     var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
 
@@ -395,8 +401,8 @@ fun compute_player_position(player_state, cursor) {
         var y_p = player_state.y +. dir_y *. delta_y_p;
 
         # don't update if player is at borders
-        var x_new = if (x_p < 0.0) 0.0 else if (x_p > intToFloat(gameWidth)) intToFloat(gameWidth) else x_p;
-        var y_new = if (y_p < 0.0) 0.0 else if (y_p > intToFloat(gameHeight)) intToFloat(gameHeight) else y_p;
+        var x_new = if (x_p < 0.0) 0.0 else if (x_p > itof(gameWidth)) itof(gameWidth) else x_p;
+        var y_new = if (y_p < 0.0) 0.0 else if (y_p > itof(gameHeight)) itof(gameHeight) else y_p;
         (x=x_new, y=y_new, mass=player_state.mass, colour=player_state.colour, name=player_state.name): PlayerState
     }
 }
@@ -415,8 +421,8 @@ fun update_food(player_id, state: GameState) {
         # nondeterministically replenish eaten food with increasing probability as
         # food amount decreases
         var food_p =
-            if (random() < 1.0 -. intToFloat(lsLength(food_pos_p)) /. intToFloat(base_food_count))
-                (pos=lsCons((intToFloat(gameWidth) *. random(), intToFloat(gameHeight) *. random()), food_pos_p),
+            if (random() < 1.0 -. itof(lsLength(food_pos_p)) /. itof(base_food_count))
+                (pos=lsCons((itof(gameWidth) *. random(), itof(gameHeight) *. random()), food_pos_p),
                  colour=lsCons(random_colour(-.1.0, 0.8, 0.9), food_colour_p))
             else
                 (pos=food_pos_p, colour=food_colour_p);
@@ -433,7 +439,7 @@ fun update_food(player_id, state: GameState) {
 fun filter_eaten(player_state, players, remove_eaten) {
     lsFilter( fun(x) {
             var curr_player = x.2;
-            if (intToFloat(curr_player.mass) *. 1.0  < intToFloat(player_state.mass))
+            if (itof(curr_player.mass) *. 1.0  < itof(player_state.mass))
                 if (euclidean_dist((player_state.x, player_state.y), (curr_player.x, curr_player.y)) > player_radius(player_state.mass))
                     remove_eaten
                 else
@@ -467,27 +473,25 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
         var players = update_players(player_id, player_state_p, state_new.players);
 
         (screen=state_new.screen, 
-         # players=lsDictAdd(player_id, player_state_p, players),
          players=players,
          food=state_new.food): GameState
     } else
         state
 }
 
-### EVENT LISTENER
+### EVENT LISTENERS
 fun on_mousemove(e) {
     var cursor = (getPageX(e), getPageY(e));
     store_int("cursor_x", cursor.1);
     store_int("cursor_y", cursor.2);
 }
 
-
 ####
-var ap = new();   # used for Game
-var ap2 = new();  # used for Client
+var game_access_point = new();
+var client_access_point = new();
 
 fun playing(game_state) {
-    var (s: (Game)) = accept(ap);
+    var (s: (Game)) = accept(game_access_point);
     <| offer s {
         case Move -> {
             var (player_id, s) = receive(s);
@@ -500,7 +504,7 @@ fun playing(game_state) {
         case AddPlayer -> {
             var (player_id, s) = receive(s);
             var (player_name, s) = receive(s);
-            var new_player_state = (name=player_name, x=500.0, y=500.0, 
+            var new_player_state = (name=player_name, x=1000.0, y=1000.0, 
                                     mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
             var game_state_new = (screen=game_state.screen, food=game_state.food,
                                   players=lsDictAdd(player_id, new_player_state, game_state.players));
@@ -516,10 +520,9 @@ fun get_initial_game_state(s, name) {
 }
 
 fun initialize(player_name) client { 
-
     replaceNode(<div id="container" tabindex="1"> 
-                    <canvas id="{canvas1}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/>
-                    <canvas id="{canvas2}" height="{intToString(screenHeight)}" width="{intToString(screenWidth)}"/> 
+                    <canvas id="{canvas1}" height="{itos(screenHeight)}" width="{itos(screenWidth)}"/>
+                    <canvas id="{canvas2}" height="{itos(screenHeight)}" width="{itos(screenWidth)}"/> 
                 </div>,
                 getNodeById("container"));
     
@@ -529,13 +532,13 @@ fun initialize(player_name) client {
     fun on_key_down(e) {
         if (getCharCode(e) == 81) {  #that's Q
             var _ = spawn {
-                var (c: (~Client)) = request(ap2);
+                var (c: (~Client)) = request(client_access_point);
                 fun other_play(player_id, game_state: GameState, in_game: Bool) {
                     if (in_game) {
-                        var (cp: (~Game)) = request(ap);
+                        var (cp: (~Game)) = request(game_access_point);
                         <| Move cp.cp[player_id].
-                                   cp[ Cursor(floatToInt(intToFloat(screenWidth) *. random()), 
-                                              floatToInt(intToFloat(screenHeight) *. random())): Input].
+                                   cp[ Cursor(ftoi(itof(screenWidth) *. random()), 
+                                              ftoi(itof(screenHeight) *. random())): Input].
                                    cp(in_game).cp(new_game_state).{ (other_play(player_id, new_game_state, in_game)) } |>
                     } else
                         other_play(player_id, game_state, in_game)
@@ -551,8 +554,8 @@ fun initialize(player_name) client {
 
     var _ = spawn {
         fun play(game_state: GameState, player_count: Int) {
-            var (c: (~Game)) = request(ap);
-            var (s: Client) = accept(ap2);
+            var (c: (~Game)) = request(game_access_point);
+            var (s: Client) = accept(client_access_point);
             <| offer s {
                 case InputMsg -> s(player_id).s(input).{
                     <| Move c.c[player_id].c[input].
@@ -580,7 +583,7 @@ fun initialize(player_name) client {
                         case (Just(x), Nothing) -> Cursor(x, gameHeight/2)
                         case (Nothing, Just(y)) -> Cursor(gameWidth/2, y)
                     };
-                var (c: (~Client)) = request(ap2);
+                var (c: (~Client)) = request(client_access_point);
                 <| InputMsg c.c[1].c[cursor].{game_loop(curr_time)} |>
             } else {
                 game_loop(prev_time)
@@ -594,7 +597,6 @@ fun initialize(player_name) client {
 }
 
 fun main() {
-
     page
         <html>
             <head>
@@ -617,13 +619,13 @@ fun main() {
                     }}
                     #{stringToXml("container")} {{
                         position: relative;
-                        width: {stringToXml(intToString(screenWidth))}px;
-                        height: {stringToXml(intToString(screenHeight))}px;
+                        width: {stringToXml(itos(screenWidth))}px;
+                        height: {stringToXml(itos(screenHeight))}px;
                     }}
                     #name_form {{
                         position: relative;
-                        left: {stringToXml(intToString(screenWidth/2))}px;
-                        top: {stringToXml(intToString(screenHeight/2))}px;
+                        left: {stringToXml(itos(screenWidth/2))}px;
+                        top: {stringToXml(itos(screenHeight/2))}px;
                     }}
                 </style>
             </head>
