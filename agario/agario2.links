@@ -43,6 +43,7 @@ fun lsUnzip(l) {
     }
 }
 
+sig lsDictAdd: (a, b, [(a,b)]) ~> [(a,b)]
 fun lsDictAdd(k, v, dict) {
     switch (lsEmpty(dict)) {
         case true -> lsCons((k, v), lsNilF())
@@ -55,6 +56,7 @@ fun lsDictAdd(k, v, dict) {
     }
 }
 
+sig lsDictLookup: (a, [(a,b)]) ~> Maybe(b)
 fun lsDictLookup(k, dict) {
     switch(lsEmpty(dict)) {
         case true -> Nothing
@@ -67,12 +69,16 @@ fun lsDictLookup(k, dict) {
     }
 }
 
+fun total_player_mass(player) {
+    lsFoldLeft(fun(x, y) {x + y.mass}, 0, player.blobs)
+}
+
 fun highest_mass_player(max_mass_player, dict) {
     switch (lsEmpty(dict)) {
         case true -> max_mass_player
         case false -> {
             var curr_player = lsHead(dict).2; 
-            if (max_mass_player.mass > curr_player.mass)
+            if (total_player_mass(max_mass_player) > total_player_mass(curr_player))
                 highest_mass_player(max_mass_player, lsTail(dict))
             else
                 highest_mass_player(curr_player, lsTail(dict))
@@ -105,7 +111,8 @@ fun get_int(name: String) {
 ########################################################################
 
 typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
-typename PlayerState = (name: String, x: Float, y: Float, mass: Int, colour: (String, String));
+typename PlayerState = (name: String, colour: (String, String), 
+                        blobs: [(x: Float, y: Float, mass: Int, acc: Float)]);
 typename ScreenState = (x: Float, y: Float, scale: Float);
 typename FoodState = (pos: [(Float, Float)], colour: [String]);
 typename GameState = (screen: ScreenState, players: [(Int, PlayerState)], food: FoodState);
@@ -173,7 +180,8 @@ fun clear(ctx) {
     jsClearRect(ctx, 0.0, 0.0, jsCanvasWidth(ctx), jsCanvasHeight(ctx))
 }
 
-fun get_scale(mass) {
+fun get_scale(player) {
+    var mass = hd(player.blobs).mass;
     1.0 /. (1.0 +. 0.01 *. sqrt(itof(mass - 20)))
 }
 
@@ -226,13 +234,23 @@ fun initial_game_state(s) {
         case Start(s) ->
             var (player_name, s) = receive(s); 
             var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
-            var player_state = (name=player_name, x=1000.0, y=1000.0, mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+            var player_state = (name=player_name, colour=random_colour_player(0.95, 0.7),
+                                blobs=[(x=1000.0, y=1000.0, mass=20, acc=0.0),
+                                       (x=1020.0, y=1020.0, mass=20, acc=0.0)]): PlayerState;
+                                # blobs = lsCons((x=1000.0, y=1000.0, mass=20, acc=0.0), lsNilF())): PlayerState;
             var players = lsDictAdd(1, player_state, lsNilF());
             var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
             var state = (screen=screen_state, players=players, food=food_state): GameState;
             ignore(send(state, s))
     }
 
+}
+
+# the base velocity of the heaviest blob
+fun player_velocity(blobs) {
+    var masses = lsMap(fun(x) { x.mass }, blobs);
+    var highest_mass = lsFoldLeft(fun(x, y) { if (x > y) x else y}, 0, masses);
+    base_velocity /. sqrt(itof(lsHead(masses)))
 }
 
 
@@ -263,24 +281,26 @@ fun draw(player_id, state: GameState) {
         jsStrokeStyle(ctx, "#ddd");
         var grid_lines_distance = ftoi(scale *. itof(grid_lines_distance));
 
+        var blob = hd(player.blobs);
+
         jsBeginPath(ctx);
-        var xs = lsFilter(fun(x) { x /. scale > player.x *. scale -. x_offset /. scale &&
-                                   x *. scale < player.x /. scale +. x_offset *. scale},
+        var xs = lsFilter(fun(x) { x /. scale > blob.x *. scale -. x_offset /. scale &&
+                                   x *. scale < blob.x /. scale +. x_offset *. scale},
                           lsMap(fun(x){ itof(grid_lines_distance * x) },
                                 lsRange(-screenWidth/2/grid_lines_distance, 
                                         (gameWidth+screenWidth/2)/grid_lines_distance)));
-        lsMapIgnore(fun(x){ jsMoveTo(ctx, (x -. player.x) *. scale +. x_offset, 0.0);
-                            jsLineTo(ctx, (x -. player.x) *. scale +. x_offset, screenHeightFloat);
+        lsMapIgnore(fun(x){ jsMoveTo(ctx, (x -. blob.x) *. scale +. x_offset, 0.0);
+                            jsLineTo(ctx, (x -. blob.x) *. scale +. x_offset, screenHeightFloat);
                             jsStroke(ctx)},
                             xs);
 
-        var ys = lsFilter(fun(y) { y /. scale > player.y *. scale -. y_offset /. scale &&
-                                   y *. scale < player.y /. scale +. y_offset *. scale},
+        var ys = lsFilter(fun(y) { y /. scale > blob.y *. scale -. y_offset /. scale &&
+                                   y *. scale < blob.y /. scale +. y_offset *. scale},
                           lsMap(fun(y){ itof(grid_lines_distance * y) }, 
                                 lsRange(-screenHeight/2/grid_lines_distance, 
                                         (gameHeight+screenHeight/2)/grid_lines_distance)));
-        lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, (y -. player.y) *. scale +. y_offset);
-                            jsLineTo(ctx, screenWidthFloat, (y -. player.y) *. scale +. y_offset);
+        lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, (y -. blob.y) *. scale +. y_offset);
+                            jsLineTo(ctx, screenWidthFloat, (y -. blob.y) *. scale +. y_offset);
                             jsStroke(ctx)},
                             ys);
 
@@ -302,7 +322,8 @@ fun draw(player_id, state: GameState) {
 
     fun draw_player_name(player, x, y) {
         jsSetFillColor(ctx, "black");
-        var font_size = ftoi(8.0 *. sqrt(sqrt(itof(player.mass))));
+        var blob = hd(player.blobs);
+        var font_size = ftoi(8.0 *. sqrt(sqrt(itof(blob.mass))));
         jsCanvasFont(ctx, itos(font_size) ^^ "px Ubuntu");
 
         var draw_x = x -. 0.22 *. itof(length(explode(player.name)) * font_size);
@@ -312,32 +333,38 @@ fun draw(player_id, state: GameState) {
 
     fun draw_food(player, scale) { 
         var food_state = state.food;
+        var blob = hd(player.blobs);
         var cells = lsZip(food_state.pos, food_state.colour);
         lsMapIgnore(fun(cell){ 
-                        draw_circle(((cell.1).1 -. player.x) *. scale +. x_offset, 
-                                    ((cell.1).2 -. player.y) *. scale +. y_offset, 
+                        draw_circle(((cell.1).1 -. blob.x) *. scale +. x_offset, 
+                                    ((cell.1).2 -. blob.y) *. scale +. y_offset, 
                                     food_radius, 1.0, cell.2, "grey", scale)
                     }, cells)
     }
 
-    fun draw_players(player, players, scale) {
+    fun draw_players(player: PlayerState, players, scale) {
         if (lsEmpty(players))
             ()
         else {
+            var blob = hd(player.blobs);
             switch (lsHead(players)) {
                 case (id, curr_player) -> {
                     if (id == player_id) {
-                        var draw_x = x_offset;
-                        var draw_y = y_offset;
-                        draw_circle(draw_x, draw_y,
-                                    player_radius(curr_player.mass), 3.0,
-                                    curr_player.colour.1, curr_player.colour.2, scale);
-                        draw_player_name(curr_player, draw_x, draw_y);
+                        # print(itos(length(curr_player.blobs)));
+                        ignore(map(fun(curr_blob) {
+                                var draw_x = x_offset;
+                                var draw_y = y_offset;
+                                draw_circle(draw_x, draw_y,
+                                            player_radius(curr_blob.mass), 3.0,
+                                            curr_player.colour.1, curr_player.colour.2, scale);
+                                draw_player_name(curr_player, draw_x, draw_y);
+                            }, curr_player.blobs));
                     } else {
-                        var draw_x = (curr_player.x -. player.x) *. scale +. x_offset;
-                        var draw_y = (curr_player.y -. player.y) *. scale +. y_offset;
+                        var curr_blob = hd(curr_player.blobs);
+                        var draw_x = (curr_blob.x -. blob.x) *. scale +. x_offset;
+                        var draw_y = (curr_blob.y -. blob.y) *. scale +. y_offset;
                         draw_circle(draw_x, draw_y,
-                                    player_radius(curr_player.mass), 3.0,
+                                    player_radius(curr_blob.mass), 3.0,
                                     curr_player.colour.1, curr_player.colour.2, scale);
                         draw_player_name(curr_player, draw_x, draw_y);
                     };
@@ -353,9 +380,10 @@ fun draw(player_id, state: GameState) {
         if (isJust(player_maybe))
             fromJust(player_maybe)
         else
-            highest_mass_player((x=1000.0, y=1000.0, mass=0, colour=("","")), state.players);
-    # var scale = 1.0 /. (1.0 +. 0.01 *. sqrt(itof(player.mass - 20)));
-    var scale = get_scale(player.mass);
+            highest_mass_player((name="", colour=("",""), 
+                                 blobs=[(x=1000.0, y=1000.0, mass=0, acc=0.0)]): PlayerState, state.players);
+    var blob = hd(player.blobs);
+    var scale = get_scale(player);
 
     draw_grid(player, scale);
     draw_food(player, scale);
@@ -372,12 +400,11 @@ fun draw(player_id, state: GameState) {
 
 
 ### GAME LOGIC
-fun compute_player_mass(player_state) {
-    player_state.mass
-}
+fun compute_player_position(player, cursor) {
 
-fun compute_player_position(player_state, cursor) {
-    var v = base_velocity /. sqrt(itof(player_state.mass));
+    var blob = hd(player.blobs);
+    var v = base_velocity /. sqrt(itof(blob.mass));
+    # var v = player_velocity(player.blobs);
 
     # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
     var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. itof(cursor.1)) /. screenWidthFloat;
@@ -386,8 +413,8 @@ fun compute_player_position(player_state, cursor) {
     var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
 
     if (delta_x_norm == 0.0 && delta_y_norm == 0.0) 
-        (x=player_state.x, y=player_state.y, mass=compute_player_mass(player_state), 
-         name=player_state.name, colour=player_state.colour): PlayerState            
+        (name=player.name, colour=player.colour,
+         blobs=[(x=blob.x, y=blob.y, mass=blob.mass, acc=blob.acc)]): PlayerState            
     else {
         # compute velocity components depending on ratio of deltas so that total velocity remains constant
         var delta_ratio = if (delta_y_norm == 0.0) 
@@ -397,13 +424,14 @@ fun compute_player_position(player_state, cursor) {
         var delta_y_p = sqrt( (v ^. 2.0) /. (delta_ratio ^. 2.0 +. 1.0) );
         var delta_x_p = delta_y_p *. delta_ratio;
 
-        var x_p = player_state.x +. dir_x *. delta_x_p;
-        var y_p = player_state.y +. dir_y *. delta_y_p;
+        var x_p = blob.x +. dir_x *. delta_x_p;
+        var y_p = blob.y +. dir_y *. delta_y_p;
 
         # don't update if player is at borders
         var x_new = if (x_p < 0.0) 0.0 else if (x_p > itof(gameWidth)) itof(gameWidth) else x_p;
         var y_new = if (y_p < 0.0) 0.0 else if (y_p > itof(gameHeight)) itof(gameHeight) else y_p;
-        (x=x_new, y=y_new, mass=player_state.mass, colour=player_state.colour, name=player_state.name): PlayerState
+        (name=player.name, colour=player.colour,
+         blobs=[(x=x_new, y=y_new, mass=blob.mass, acc=blob.acc)]): PlayerState
     }
 }
 
@@ -413,8 +441,9 @@ fun update_food(player_id, state: GameState) {
     if (isJust(player_maybe)) {
         # filter out food particles which are eaten by the player and update player mass accordingly
         var player = fromJust(player_maybe);
-        var player_pos = (player.x, player.y);
-        var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, player_pos) > player_radius(player.mass) },
+        var blob = hd(player.blobs);
+        var blob_pos = (blob.x, blob.y);
+        var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, blob_pos) > player_radius(blob.mass) },
                                       lsZip(state.food.pos, state.food.colour));
         var (food_pos_p, food_colour_p) = lsUnzip(zipped_food_p);
 
@@ -427,8 +456,9 @@ fun update_food(player_id, state: GameState) {
             else
                 (pos=food_pos_p, colour=food_colour_p);
         
-        var player_p = (x=player.x, y=player.y, colour=player.colour, name=player.name,
-                 mass=player.mass + (lsLength(state.food.colour) - lsLength(food_colour_p))): PlayerState;
+        var player_p = (colour=player.colour, name=player.name,
+                        blobs=[(x=blob.x, y=blob.y, acc=blob.acc,
+                                mass=blob.mass + (lsLength(state.food.colour) - lsLength(food_colour_p)))]): PlayerState;
         var players_p = lsDictAdd(player_id, player_p, state.players);
         
         (players=players_p, screen=state.screen, food=food_p): GameState
@@ -436,11 +466,13 @@ fun update_food(player_id, state: GameState) {
         state
 }
 
-fun filter_eaten(player_state, players, remove_eaten) {
+fun filter_eaten(player, players, remove_eaten) {
+    var blob = hd(player.blobs);
     lsFilter( fun(x) {
             var curr_player = x.2;
-            if (itof(curr_player.mass) *. 1.0  < itof(player_state.mass))
-                if (euclidean_dist((player_state.x, player_state.y), (curr_player.x, curr_player.y)) > player_radius(player_state.mass))
+            var curr_blob = hd(curr_player.blobs);
+            if (itof(curr_blob.mass) *. 1.0  < itof(blob.mass))
+                if (euclidean_dist((blob.x, blob.y), (curr_blob.x, curr_blob.y)) > player_radius(blob.mass))
                     remove_eaten
                 else
                     not(remove_eaten)
@@ -449,15 +481,13 @@ fun filter_eaten(player_state, players, remove_eaten) {
         }, players)    
 }
 
-fun update_players(player_id, player_state: PlayerState, players) {
+fun update_players(player_id, player: PlayerState, players) {
     #filter out other players eaten by this player
-    var player_mass_p = lsFoldLeft((+), player_state.mass, lsMap(fun(x) {(x.2).mass}, filter_eaten(player_state, players, false)));
-    var players_p = filter_eaten(player_state, players, true);
-    lsDictAdd(player_id, (x=player_state.x,
-                          y=player_state.y,
-                          colour=player_state.colour,
-                          name=player_state.name,
-                          mass=player_mass_p): PlayerState, players_p)
+    var blob = hd(player.blobs);
+    var blob_mass_p = lsFoldLeft((+), blob.mass, lsMap(fun(x) {hd((x.2).blobs).mass}, filter_eaten(player, players, false)));
+    var players_p = filter_eaten(player, players, true);
+    lsDictAdd(player_id, (name=player.name, colour=player.colour,
+                          blobs=[(x=blob.x, y=blob.y, mass=blob_mass_p, acc=blob.acc)]): PlayerState, players_p)
 }
 
 fun update_logic(state: GameState, player_id: Int, in_event: Input) {
@@ -466,10 +496,15 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
         case _ -> (0,0)
     };
     var state_new = update_food(player_id, state);
+    # print(itos(lsLength((lsHead(state.players).2).blobs)) ); # checks out
     var player_state_maybe = lsDictLookup(player_id, state_new.players);
     if (isJust(player_state_maybe)) {
-        var player_state = fromJust(player_state_maybe);
-        var player_state_p = compute_player_position(player_state: PlayerState, cursor_xy);
+        var (player_state: PlayerState) = fromJust(player_state_maybe);
+        var blobs = player_state.blobs;
+        # print(itos(lsLength(blobs)));
+        print(itos(length(blobs)));
+        # print(player_state.colour.1); # checks out
+        var player_state_p = compute_player_position(player_state, cursor_xy);
         var players = update_players(player_id, player_state_p, state_new.players);
 
         (screen=state_new.screen, 
@@ -504,8 +539,8 @@ fun playing(game_state) {
         case AddPlayer -> {
             var (player_id, s) = receive(s);
             var (player_name, s) = receive(s);
-            var new_player_state = (name=player_name, x=1000.0, y=1000.0, 
-                                    mass=20, colour=random_colour_player(0.95, 0.7)): PlayerState;
+            var new_player_state = (name=player_name, colour=random_colour_player(0.95, 0.7),
+                                    blobs=[(x=1000.0, y=1000.0, mass=20, acc=0.0)]): PlayerState;
             var game_state_new = (screen=game_state.screen, food=game_state.food,
                                   players=lsDictAdd(player_id, new_player_state, game_state.players));
             ignore(send(game_state_new, s));
