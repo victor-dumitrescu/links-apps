@@ -1,6 +1,7 @@
 fun itos(x) { intToString(x) }
 fun ftoi(x) { floatToInt(x) }
 fun itof(x) { intToFloat(x) }
+fun ftos(x) { floatToString(x) }
 
 #
 # LISTS
@@ -111,8 +112,8 @@ fun get_int(name: String) {
 ########################################################################
 
 typename Input = [| KeyUp: Int | KeyDown: Int | Cursor: (Int, Int) |];
-typename PlayerState = (name: String, colour: (String, String), 
-                        blobs: [(x: Float, y: Float, mass: Int, acc: Float)]);
+typename Blob = (x: Float, y: Float, mass: Int, acc: Float);
+typename PlayerState = (name: String, colour: (String, String), blobs: [Blob]);
 typename ScreenState = (x: Float, y: Float, scale: Float);
 typename FoodState = (pos: [(Float, Float)], colour: [String]);
 typename GameState = (screen: ScreenState, players: [(Int, PlayerState)], food: FoodState);
@@ -193,6 +194,22 @@ fun euclidean_dist((x1, y1), (x2, y2)) {
     sqrt( (x1 -. x2) ^. 2.0 +. (y1 -. y2) ^. 2.0 )
 }
 
+fun centre_of_mass(blobs: [Blob]) {
+    if (length(blobs) == 1)
+        (hd(blobs).x, hd(blobs).y)
+    else {
+        var highest_mass = switch(max(map(fun(x) {x. mass}, blobs))) {
+            case Some(m) -> itof(m)
+            case None -> 0.0
+        };
+        var x_com = fold_left(fun(a,b) {a +. itof(b.mass) /. highest_mass *. b.x}, 0.0, blobs) /. itof(length(blobs));
+        var y_com = fold_left(fun(a,b) {a +. itof(b.mass) /. highest_mass *. b.y}, 0.0, blobs) /. itof(length(blobs));
+        # print(ftos(x_com) ^^ " " ^^ ftos(y_com));
+        (x_com, y_com)
+    }
+}
+
+
 ### GAME CONSTANTS
 var logging = false;
 
@@ -236,7 +253,7 @@ fun initial_game_state(s) {
             var screen_state = (x=0.0, y=0.0, scale=0.0): ScreenState;
             var player_state = (name=player_name, colour=random_colour_player(0.95, 0.7),
                                 blobs=[(x=1000.0, y=1000.0, mass=20, acc=0.0),
-                                       (x=1020.0, y=1020.0, mass=20, acc=0.0)]): PlayerState;
+                                       (x=1100.0, y=1000.0, mass=20, acc=0.0)]): PlayerState;
                                 # blobs = lsCons((x=1000.0, y=1000.0, mass=20, acc=0.0), lsNilF())): PlayerState;
             var players = lsDictAdd(1, player_state, lsNilF());
             var food_state = initialize_food(gameWidth, gameHeight, base_food_count);
@@ -275,32 +292,30 @@ fun draw(player_id, state: GameState) {
     var canvas_node = getNodeById(main_canvas);
     var ctx = jsGetContext2D(canvas_node);
 
-    fun draw_grid(player, scale) {
+    fun draw_grid(player_x, player_y, scale) {
 
         jsLineWidth(ctx, scale);
         jsStrokeStyle(ctx, "#ddd");
         var grid_lines_distance = ftoi(scale *. itof(grid_lines_distance));
 
-        var blob = hd(player.blobs);
-
         jsBeginPath(ctx);
-        var xs = lsFilter(fun(x) { x /. scale > blob.x *. scale -. x_offset /. scale &&
-                                   x *. scale < blob.x /. scale +. x_offset *. scale},
+        var xs = lsFilter(fun(x) { x /. scale > player_x *. scale -. x_offset /. scale &&
+                                   x *. scale < player_x /. scale +. x_offset *. scale},
                           lsMap(fun(x){ itof(grid_lines_distance * x) },
                                 lsRange(-screenWidth/2/grid_lines_distance, 
                                         (gameWidth+screenWidth/2)/grid_lines_distance)));
-        lsMapIgnore(fun(x){ jsMoveTo(ctx, (x -. blob.x) *. scale +. x_offset, 0.0);
-                            jsLineTo(ctx, (x -. blob.x) *. scale +. x_offset, screenHeightFloat);
+        lsMapIgnore(fun(x){ jsMoveTo(ctx, (x -. player_x) *. scale +. x_offset, 0.0);
+                            jsLineTo(ctx, (x -. player_x) *. scale +. x_offset, screenHeightFloat);
                             jsStroke(ctx)},
                             xs);
 
-        var ys = lsFilter(fun(y) { y /. scale > blob.y *. scale -. y_offset /. scale &&
-                                   y *. scale < blob.y /. scale +. y_offset *. scale},
+        var ys = lsFilter(fun(y) { y /. scale > player_y *. scale -. y_offset /. scale &&
+                                   y *. scale < player_y /. scale +. y_offset *. scale},
                           lsMap(fun(y){ itof(grid_lines_distance * y) }, 
                                 lsRange(-screenHeight/2/grid_lines_distance, 
                                         (gameHeight+screenHeight/2)/grid_lines_distance)));
-        lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, (y -. blob.y) *. scale +. y_offset);
-                            jsLineTo(ctx, screenWidthFloat, (y -. blob.y) *. scale +. y_offset);
+        lsMapIgnore(fun(y){ jsMoveTo(ctx, 0.0, (y -. player_y) *. scale +. y_offset);
+                            jsLineTo(ctx, screenWidthFloat, (y -. player_y) *. scale +. y_offset);
                             jsStroke(ctx)},
                             ys);
 
@@ -346,14 +361,14 @@ fun draw(player_id, state: GameState) {
         if (lsEmpty(players))
             ()
         else {
+            var (x_com, y_com) = centre_of_mass(player.blobs);
             var blob = hd(player.blobs);
             switch (lsHead(players)) {
                 case (id, curr_player) -> {
                     if (id == player_id) {
-                        # print(itos(length(curr_player.blobs)));
                         ignore(map(fun(curr_blob) {
-                                var draw_x = x_offset;
-                                var draw_y = y_offset;
+                                var draw_x = x_offset -. x_com +. curr_blob.x;
+                                var draw_y = y_offset -. y_com +. curr_blob.y;
                                 draw_circle(draw_x, draw_y,
                                             player_radius(curr_blob.mass), 3.0,
                                             curr_player.colour.1, curr_player.colour.2, scale);
@@ -382,10 +397,10 @@ fun draw(player_id, state: GameState) {
         else
             highest_mass_player((name="", colour=("",""), 
                                  blobs=[(x=1000.0, y=1000.0, mass=0, acc=0.0)]): PlayerState, state.players);
-    var blob = hd(player.blobs);
     var scale = get_scale(player);
+    var (player_x, player_y) = centre_of_mass(player.blobs);
 
-    draw_grid(player, scale);
+    draw_grid(player_x, player_y, scale);
     draw_food(player, scale);
     draw_players(player, state.players, scale);
     swap_buffers(canvas_node, getNodeById(disp_canvas));
@@ -395,6 +410,8 @@ fun draw(player_id, state: GameState) {
         jsCanvasFont(ctx, "60px Ubuntu");
         jsFillText(ctx, "Game over!", 230.0, 220.0);
     } else ();
+
+    draw_circle(x_offset, y_offset, 2.0, 1.0, "black", "black", 1.0);
     ()
 }
 
@@ -402,49 +419,67 @@ fun draw(player_id, state: GameState) {
 ### GAME LOGIC
 fun compute_player_position(player, cursor) {
 
-    var blob = hd(player.blobs);
-    var v = base_velocity /. sqrt(itof(blob.mass));
-    # var v = player_velocity(player.blobs);
+    var (x_com, y_com) = centre_of_mass(player.blobs);
+    fun compute_blob_position(blobs: [Blob]) {
+        switch(empty(blobs)) {
+            case true -> []
+            case false -> {
+                var blob = hd(blobs);
+                var v = base_velocity /. sqrt(itof(blob.mass));
 
-    # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
-    var delta_x_norm = 2.0 *. (screenWidthFloat /. 2.0 -. itof(cursor.1)) /. screenWidthFloat;
-    var delta_y_norm = 2.0 *. (screenHeightFloat /. 2.0 -. itof(cursor.2)) /. screenHeightFloat;
-    var dir_x = if (delta_x_norm > 0.0) -.1.0 else 1.0;
-    var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
+                # normalised (wrt screen dimensions) difference in dtsance between player and cursor position
+                var delta_x_norm = 2.0 *. (x_offset -. x_com +. blob.x -. itof(cursor.1)) /. screenWidthFloat;
+                var delta_y_norm = 2.0 *. (y_offset -. y_com +. blob.y -. itof(cursor.2)) /. screenHeightFloat;
+                var dir_x = if (delta_x_norm > 0.0) -.1.0 else 1.0;
+                var dir_y = if (delta_y_norm > 0.0) -.1.0 else 1.0;
 
-    if (delta_x_norm == 0.0 && delta_y_norm == 0.0) 
-        (name=player.name, colour=player.colour,
-         blobs=[(x=blob.x, y=blob.y, mass=blob.mass, acc=blob.acc)]): PlayerState            
-    else {
-        # compute velocity components depending on ratio of deltas so that total velocity remains constant
-        var delta_ratio = if (delta_y_norm == 0.0) 
-                            1.0 
-                          else 
-                            floatAbs(delta_x_norm) /. floatAbs(delta_y_norm);
-        var delta_y_p = sqrt( (v ^. 2.0) /. (delta_ratio ^. 2.0 +. 1.0) );
-        var delta_x_p = delta_y_p *. delta_ratio;
+                if (delta_x_norm == 0.0 && delta_y_norm == 0.0) 
+                    ((x=blob.x, y=blob.y, mass=blob.mass, acc=blob.acc) :: compute_blob_position(tl(blobs)))
+                else {
+                    # compute velocity components depending on ratio of deltas so that total velocity remains constant
+                    var delta_ratio = if (delta_y_norm == 0.0) 
+                                        1.0 
+                                      else 
+                                        floatAbs(delta_x_norm) /. floatAbs(delta_y_norm);
+                    var delta_y_p = sqrt( (v ^. 2.0) /. (delta_ratio ^. 2.0 +. 1.0) );
+                    var delta_x_p = delta_y_p *. delta_ratio;
 
-        var x_p = blob.x +. dir_x *. delta_x_p;
-        var y_p = blob.y +. dir_y *. delta_y_p;
+                    var x_p = blob.x +. dir_x *. delta_x_p;
+                    var y_p = blob.y +. dir_y *. delta_y_p;
 
-        # don't update if player is at borders
-        var x_new = if (x_p < 0.0) 0.0 else if (x_p > itof(gameWidth)) itof(gameWidth) else x_p;
-        var y_new = if (y_p < 0.0) 0.0 else if (y_p > itof(gameHeight)) itof(gameHeight) else y_p;
-        (name=player.name, colour=player.colour,
-         blobs=[(x=x_new, y=y_new, mass=blob.mass, acc=blob.acc)]): PlayerState
+                    # don't update if player is at borders
+                    var x_new = if (x_p < 0.0) 0.0 else if (x_p > itof(gameWidth)) itof(gameWidth) else x_p;
+                    var y_new = if (y_p < 0.0) 0.0 else if (y_p > itof(gameHeight)) itof(gameHeight) else y_p;
+                    ((x=x_new, y=y_new, mass=blob.mass, acc=blob.acc) :: compute_blob_position(tl(blobs)))
+                }
+            }
+        }
     }
+
+    (name=player.name, colour=player.colour,
+     blobs=compute_blob_position(player.blobs)): PlayerState
 }
 
 fun update_food(player_id, state: GameState) {
+
+    fun update_blob_food(blobs: [Blob], zipped_food) {
+        switch (empty(blobs)) {
+            case true -> (blobs, zipped_food)
+            case false -> {
+                var blob = hd(blobs);
+                var blob_pos = (blob.x, blob.y);
+                var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, blob_pos) > player_radius(blob.mass) }, zipped_food);
+                var blob_p = (x=blob.x, y=blob.y, acc=blob.acc, mass=blob.mass - lsLength(zipped_food_p) + lsLength(zipped_food)): Blob;
+                var (next_blobs, next_food) = update_blob_food(tl(blobs), zipped_food_p);
+                (blob_p :: next_blobs, next_food)
+            }
+        }
+    }
     
     var player_maybe = lsDictLookup(player_id, state.players);
     if (isJust(player_maybe)) {
-        # filter out food particles which are eaten by the player and update player mass accordingly
         var player = fromJust(player_maybe);
-        var blob = hd(player.blobs);
-        var blob_pos = (blob.x, blob.y);
-        var zipped_food_p = lsFilter( fun(x) { euclidean_dist(x.1, blob_pos) > player_radius(blob.mass) },
-                                      lsZip(state.food.pos, state.food.colour));
+        var (blobs_p, zipped_food_p) = update_blob_food(player.blobs, lsZip(state.food.pos, state.food.colour));
         var (food_pos_p, food_colour_p) = lsUnzip(zipped_food_p);
 
         # nondeterministically replenish eaten food with increasing probability as
@@ -456,9 +491,7 @@ fun update_food(player_id, state: GameState) {
             else
                 (pos=food_pos_p, colour=food_colour_p);
         
-        var player_p = (colour=player.colour, name=player.name,
-                        blobs=[(x=blob.x, y=blob.y, acc=blob.acc,
-                                mass=blob.mass + (lsLength(state.food.colour) - lsLength(food_colour_p)))]): PlayerState;
+        var player_p = (colour=player.colour, name=player.name, blobs=blobs_p): PlayerState;
         var players_p = lsDictAdd(player_id, player_p, state.players);
         
         (players=players_p, screen=state.screen, food=food_p): GameState
@@ -483,11 +516,12 @@ fun filter_eaten(player, players, remove_eaten) {
 
 fun update_players(player_id, player: PlayerState, players) {
     #filter out other players eaten by this player
+
     var blob = hd(player.blobs);
     var blob_mass_p = lsFoldLeft((+), blob.mass, lsMap(fun(x) {hd((x.2).blobs).mass}, filter_eaten(player, players, false)));
     var players_p = filter_eaten(player, players, true);
     lsDictAdd(player_id, (name=player.name, colour=player.colour,
-                          blobs=[(x=blob.x, y=blob.y, mass=blob_mass_p, acc=blob.acc)]): PlayerState, players_p)
+                          blobs=((x=blob.x, y=blob.y, mass=blob_mass_p, acc=blob.acc)::tl(player.blobs))): PlayerState, players_p)
 }
 
 fun update_logic(state: GameState, player_id: Int, in_event: Input) {
@@ -496,14 +530,10 @@ fun update_logic(state: GameState, player_id: Int, in_event: Input) {
         case _ -> (0,0)
     };
     var state_new = update_food(player_id, state);
-    # print(itos(lsLength((lsHead(state.players).2).blobs)) ); # checks out
     var player_state_maybe = lsDictLookup(player_id, state_new.players);
     if (isJust(player_state_maybe)) {
         var (player_state: PlayerState) = fromJust(player_state_maybe);
         var blobs = player_state.blobs;
-        # print(itos(lsLength(blobs)));
-        print(itos(length(blobs)));
-        # print(player_state.colour.1); # checks out
         var player_state_p = compute_player_position(player_state, cursor_xy);
         var players = update_players(player_id, player_state_p, state_new.players);
 
@@ -592,14 +622,12 @@ fun initialize(player_name) client {
             var (c: (~Game)) = request(game_access_point);
             var (s: Client) = accept(client_access_point);
             <| offer s {
-                case InputMsg -> s(player_id).s(input).{
-                    <| Move c.c[player_id].c[input].
+                case InputMsg -> s(player_id).s(input).
+                    Move c.c[player_id].c[input].
                               c(in_game).c(new_game_state).{ if(in_game) draw(player_id, new_game_state) else (); 
-                                                                       (play(new_game_state, player_count))} |>
-                }
-                case NewPlayer -> s(name).s[player_count+1].s[game_state].{
-                    <| AddPlayer c.c[player_count+1].c[name].c(new_game_state).{ (play(new_game_state, player_count+1)) } |>
-                }
+                                                                       (play(new_game_state, player_count))}
+                case NewPlayer -> s(name).s[player_count+1].s[game_state].
+                    AddPlayer c.c[player_count+1].c[name].c(new_game_state).{ (play(new_game_state, player_count+1)) }
             } |>
         }
 
